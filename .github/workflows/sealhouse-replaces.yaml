@@ -1,0 +1,61 @@
+# Releases fork libraries into replaces.lock and takes the consumers to the new lines.
+name: sealhouse-replaces
+
+on:
+  push:
+    branches: [main]
+    paths: [replaces.lock]
+  schedule:
+    - cron: '23 7 * * *'
+  workflow_dispatch:
+    inputs:
+      fork:
+        required: true
+      subdir:
+        default: .
+      reason:
+        required: true
+      drop-when:
+        description: upstream>=vX.Y.Z
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: sealhouse-replaces
+  cancel-in-progress: false
+
+jobs:
+  replaces:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      BOT_APP_ID: ${{ secrets.SEALHOUSE_BOT_APP_ID }}
+      BOT_APP_KEY: ${{ secrets.SEALHOUSE_BOT_APP_KEY }}
+      SYNC_APP_ID: ${{ secrets.SEALHOUSE_SYNC_APP_ID }}
+      SYNC_APP_KEY: ${{ secrets.SEALHOUSE_SYNC_APP_KEY }}
+    steps:
+      - name: Scripts
+        run: |
+          git clone -q "https://github.com/${GITHUB_REPOSITORY}.git" ci
+          git -C ci checkout -q --detach "${GITHUB_SHA}"
+          ci/hack/install-go.sh
+      - name: Toolchain
+        run: ci/hack/tools.sh
+      - name: Release
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          FORK: ${{ inputs.fork }}
+          SUBDIR: ${{ inputs.subdir }}
+          REASON: ${{ inputs.reason }}
+          DROP_WHEN: ${{ inputs.drop-when }}
+        run: ci/hack/release-library.sh "${FORK}" "${SUBDIR}" "${REASON}" "${DROP_WHEN}"
+      - name: Release what changed
+        if: github.event_name == 'schedule'
+        run: ci/hack/release-library.sh --auto
+      - name: Consumers
+        if: github.event_name != 'workflow_dispatch'
+        run: ci/hack/replace-consumers.sh
+      - name: Removable
+        if: github.event_name == 'schedule'
+        run: ci/hack/release-library.sh --removable | tee -a "${GITHUB_STEP_SUMMARY}"

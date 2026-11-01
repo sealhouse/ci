@@ -1,0 +1,149 @@
+# Reusable merge lane. Callers pin this file and ci-ref to one commit.
+name: merge
+
+on:
+  workflow_call:
+    inputs:
+      ci-ref:
+        description: commit this file is pinned at
+        type: string
+        required: true
+      image:
+        description: build, test and push the .sealhouse image
+        type: boolean
+        default: false
+      publish:
+        description: make target to run on the merged commit
+        type: string
+        default: ''
+    secrets:
+      dispatch-app-id:
+        required: false
+      dispatch-app-key:
+        required: false
+    outputs:
+      image:
+        description: the pushed image, by digest
+        value: ${{ jobs.merge.outputs.image }}
+
+permissions: {}
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    concurrency: merge-${{ github.ref }}
+    permissions:
+      packages: write
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+    env:
+      CI_REF: ${{ inputs.ci-ref }}
+      SHA: ${{ github.event.after }}
+      BRANCH: ${{ github.ref_name }}
+      HEAD_REPO: https://github.com/${{ github.repository }}.git
+      KUBECONFIG: ''
+    steps:
+      - name: CI scripts
+        run: |
+          set -euo pipefail
+          ci="${SEALHOUSE_CI:-}"
+          if [ -z "${ci}" ]; then
+            ci="${RUNNER_TEMP}/ci"
+            git clone -q https://github.com/sealhouse/ci.git "${ci}"
+            git -C "${ci}" checkout -q --detach "${CI_REF}"
+          fi
+          have="$(git -C "${ci}" rev-parse HEAD)"
+          [ "${have}" = "${CI_REF}" ] || { echo "ci is at ${have}, the caller pins ${CI_REF}" >&2; exit 1; }
+          echo "CI_DIR=${ci}" >>"${GITHUB_ENV}"
+
+      - name: Checkout
+        run: |
+          set -euo pipefail
+          [ -n "${SHA}" ] && [ "${SHA}" != 0000000000000000000000000000000000000000 ] || { echo "the push event names no commit" >&2; exit 1; }
+          "${CI_DIR}/hack/checkout.sh" "${SHA}"
+
+      - name: Go
+        run: '"${CI_DIR}/hack/install-go.sh"'
+
+      - name: Toolchain
+        run: |
+          set -euo pipefail
+          go version
+          docker version --format 'docker {{.Server.Version}}'
+          echo "$(go env GOPATH)/bin" >>"${GITHUB_PATH}"
+          PATH="$(go env GOPATH)/bin:${PATH}" "${CI_DIR}/hack/tools.sh"
+
+      # Reports only; releases gate on findings.
+      - name: Vulnerabilities
+        continue-on-error: true
+        run: '"${CI_DIR}/hack/vulncheck.sh" . ${SEALHOUSE_OUT:+"${SEALHOUSE_OUT}/vulns"}'
+
+      # Local lanes use the local registry.
+      - name: Registry
+        if: inputs.image || inputs.publish != ''
+        env:
+          TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          [ -z "${SEALHOUSE_CI:-}" ] || exit 0
+          printf '%s' "${TOKEN}" | docker login ghcr.io -u "${ACTOR}" --password-stdin
+          echo "REGISTRY_HOST=ghcr.io" >>"${GITHUB_ENV}"
+
+      - name: Image
+        id: image
+        if: inputs.image
+        run: |
+          set -euo pipefail
+          tag="${BRANCH//\//-}-$(git rev-parse --short=12 HEAD)"
+          built="$("${CI_DIR}/hack/build-image.sh" . "${tag}" | tail -1)"
+          image="${REGISTRY_HOST:-localhost:5001}/sealhouse/${built}"
+          echo "image=${image}" >>"${GITHUB_OUTPUT}"
+          if [ -n "${SEALHOUSE_OUT:-}" ]; then echo "${image}" >"${SEALHOUSE_OUT}/image"; fi
+          echo "pushed ${image} (tag ${tag})"
+
+      - name: Publish
+        if: inputs.publish != ''
+        run: |
+          set -euo pipefail
+          if [ -z "${SEALHOUSE_CI:-}" ]; then
+            export CATALOG_REPO="${RUNNER_TEMP}/pqc-catalog"
+            git clone -q https://github.com/sealhouse/pqc-catalog.git "${CATALOG_REPO}"
+            export GIT_AUTHOR_NAME=sealhouse-bot GIT_AUTHOR_EMAIL=sealhouse-bot@sealhouse.invalid
+            export GIT_COMMITTER_NAME=sealhouse-bot GIT_COMMITTER_EMAIL=sealhouse-bot@sealhouse.invalid
+            echo "CATALOG_REPO=${CATALOG_REPO}" >>"${GITHUB_ENV}"
+            # The last merge's catalog is recorded by another workflow.
+            for _ in $(seq 20); do
+              recorded="$(sed -n 's/^CATALOG_IMAGE=//p' "${CATALOG_REPO}/alpha/head.env" 2>/dev/null || true)"
+              [ -n "${recorded}" ] || break
+              [ "${recorded##*@}" != "$(crane digest ghcr.io/sealhouse/pqc-catalog:alpha)" ] || break
+              sleep 30
+              git -C "${CATALOG_REPO}" pull -q --ff-only
+            done
+          fi
+          "${CI_DIR}/hack/cluster-up.sh"
+          make "${{ inputs.publish }}"
+
+      # Local lanes do this from merge.sh.
+      - name: Hand off
+        if: inputs.image || inputs.publish != ''
+        env:
+          DISPATCH_APP_ID: ${{ secrets.dispatch-app-id }}
+          DISPATCH_APP_KEY: ${{ secrets.dispatch-app-key }}
+          IMAGE: ${{ steps.image.outputs.image }}
+        run: |
+          set -euo pipefail
+          [ -z "${SEALHOUSE_CI:-}" ] || exit 0
+          if [ -n "${IMAGE}" ]; then
+            "${CI_DIR}/hack/request-lane.sh" sealhouse-bump.yaml "fork=${GITHUB_REPOSITORY#*/}" "commit=${SHA}" "image=${IMAGE}" "branch=${BRANCH}"
+          fi
+          if [ -f "${CATALOG_REPO:-}/alpha/head.env" ]; then
+            "${CI_DIR}/hack/request-lane.sh" sealhouse-catalog.yaml "head-env=$(base64 -w0 "${CATALOG_REPO}/alpha/head.env")"
+            "${CI_DIR}/hack/request-lane.sh" sealhouse-bump-update.yaml
+          fi
+
+      # setup-envtest installs read-only.
+      - name: Workspace removable
+        if: always()
+        run: chmod -R u+w .

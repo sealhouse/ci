@@ -1,0 +1,9 @@
+# <fork> <upstream url> <upstream branch>
+cosign https://github.com/sigstore/cosign.git main
+fulcio https://github.com/sigstore/fulcio.git main
+go-tuf https://github.com/theupdateframework/go-tuf.git master
+protobuf-specs https://github.com/sigstore/protobuf-specs.git main
+rekor-tiles https://github.com/sigstore/rekor-tiles.git main
+sigstore https://github.com/sigstore/sigstore.git main
+sigstore-go https://github.com/sigstore/sigstore-go.git main
+timestamp-authority https://github.com/sigstore/timestamp-authority.git main

@@ -1,0 +1,29 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - olm.yaml
+patches:
+  - target:
+      kind: CatalogSource
+      name: operatorhubio-catalog
+    patch: |
+      $patch: delete
+      apiVersion: operators.coreos.com/v1alpha1
+      kind: CatalogSource
+      metadata:
+        name: operatorhubio-catalog
+        namespace: olm
+  - target:
+      kind: Deployment
+      name: catalog-operator
+    patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/args
+        value:
+          - --namespace
+          - olm
+          - --configmapServerImage=quay.io/operator-framework/configmap-operator-registry@sha256:3e259e1e339ad9d388cb611745312ae1c0390c9338bfd6d9965811e1978d9d1c
+          - --opmImage=quay.io/operator-framework/opm@sha256:b32d3891616662620da08d7f0ec42c2e69fa2de43427dc975d35b12f7a969a0f
+          - --util-image
+          - quay.io/operator-framework/olm@sha256:4404599eb7b7736bdbd0f36260a60599f32acb6edeaf7d0c54bb10b36619e5fe
+          - --set-workload-user-id=true

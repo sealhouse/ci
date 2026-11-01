@@ -1,0 +1,13 @@
+# OLM with registry and unpack UIDs from the SCC range, as on OpenShift.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../olm
+patches:
+  - target:
+      kind: Deployment
+      name: catalog-operator
+    patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/args/6
+        value: --set-workload-user-id=false

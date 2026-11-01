@@ -1,0 +1,6 @@
+# OLM v0 install manifests, the crds.yaml and olm.yaml assets of the upstream
+# release, unmodified.
+release=https://github.com/operator-framework/operator-lifecycle-manager/releases/tag/v0.46.0
+tag=v0.46.0
+2ecd51a33dfa00a5abcae7bf47bcc4eea6c6d6b4212bb36d6b887aa6ef6d63c5  crds.yaml
+3a6cd5caea67bedc11464ad443fa0826d3777d7f1b4f2dfa00766a739f2ab44c  olm.yaml

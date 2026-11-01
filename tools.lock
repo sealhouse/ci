@@ -1,0 +1,6 @@
+GO=1.27.3 65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40
+KIND=sigs.k8s.io/kind@v0.33.0
+COSIGN=github.com/sigstore/cosign/v3/cmd/cosign@v3.1.4
+CRANE=github.com/google/go-containerregistry/cmd/crane@v0.22.1
+GOVULNCHECK=golang.org/x/vuln/cmd/govulncheck@v1.9.0
+ACTIONLINT=github.com/rhysd/actionlint/cmd/actionlint@v1.7.12

@@ -1,0 +1,120 @@
+# Reusable PR lane. Callers pin this file and ci-ref to one commit.
+name: pr
+
+on:
+  workflow_call:
+    inputs:
+      ci-ref:
+        description: commit this file is pinned at
+        type: string
+        required: true
+      test:
+        description: make target for unit tests
+        type: string
+        default: test
+      build:
+        description: packages to go build
+        type: string
+        default: ''
+      lint:
+        description: make target for linters
+        type: string
+        default: ''
+      image:
+        description: build, test and push the .sealhouse image
+        type: boolean
+        default: false
+      e2e:
+        description: make target for e2e tests
+        type: string
+        default: ''
+
+permissions: {}
+
+jobs:
+  pr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      CI_REF: ${{ inputs.ci-ref }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      HEAD_REPO: ${{ github.event.pull_request.head.repo.clone_url || format('https://github.com/{0}.git', github.repository) }}
+      KUBECONFIG: ''
+    steps:
+      - name: CI scripts
+        run: |
+          set -euo pipefail
+          ci="${SEALHOUSE_CI:-}"
+          if [ -z "${ci}" ]; then
+            ci="${RUNNER_TEMP}/ci"
+            git clone -q https://github.com/sealhouse/ci.git "${ci}"
+            git -C "${ci}" checkout -q --detach "${CI_REF}"
+          fi
+          have="$(git -C "${ci}" rev-parse HEAD)"
+          [ "${have}" = "${CI_REF}" ] || { echo "ci is at ${have}, the caller pins ${CI_REF}" >&2; exit 1; }
+          echo "CI_DIR=${ci}" >>"${GITHUB_ENV}"
+
+      - name: Checkout
+        run: '"${CI_DIR}/hack/checkout.sh" "${HEAD_SHA}"'
+
+      - name: Carries
+        if: startsWith(github.event.pull_request.base.ref, 'rhtas/') || startsWith(github.event.pull_request.base.ref, 'release-')
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: 'FORK_BRANCH=HEAD "${CI_DIR}/hack/fork-sync.sh" --check --since "${BASE_SHA}" .'
+
+      - name: Go
+        run: '"${CI_DIR}/hack/install-go.sh"'
+
+      - name: Toolchain
+        run: |
+          set -euo pipefail
+          go version
+          docker version --format 'docker {{.Server.Version}}'
+          echo "$(go env GOPATH)/bin" >>"${GITHUB_PATH}"
+          PATH="$(go env GOPATH)/bin:${PATH}" "${CI_DIR}/hack/tools.sh"
+
+      - name: Build
+        if: inputs.build != ''
+        run: go build ${{ inputs.build }}
+
+      - name: Unit tests
+        if: inputs.test != ''
+        run: make "${{ inputs.test }}"
+
+      - name: Replaces
+        run: '"${CI_DIR}/hack/check-replaces.sh" .'
+
+      # Reports only; releases gate on findings.
+      - name: Vulnerabilities
+        continue-on-error: true
+        run: '"${CI_DIR}/hack/vulncheck.sh" .'
+
+      - name: Lint
+        if: inputs.lint != ''
+        run: make "${{ inputs.lint }}"
+
+      - name: Image
+        if: inputs.image
+        run: '"${CI_DIR}/hack/build-image.sh" . "pr-$(git rev-parse --short HEAD)"'
+
+      - name: E2E
+        if: inputs.e2e != ''
+        run: |
+          set -euo pipefail
+          "${CI_DIR}/hack/cluster-up.sh"
+          make "${{ inputs.e2e }}"
+
+      - name: Tree unchanged
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --short >&2
+            git diff >&2
+            exit 1
+          fi
+
+      # setup-envtest installs read-only.
+      - name: Workspace removable
+        if: always()
+        run: chmod -R u+w .

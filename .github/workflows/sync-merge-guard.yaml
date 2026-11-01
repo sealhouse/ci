@@ -1,0 +1,21 @@
+# Blocks the merge button on sync PRs, which merge by fast-forward only.
+name: sync-merge-guard
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  sync-merge-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Not a sync PR
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          if [ "${HEAD_REF}" = rhtas/sync ]; then
+            echo "::error::rhtas/sync is merged by fast-forward (fork-sync), not with the merge button"
+            exit 1
+          fi
+          echo "head ${HEAD_REF:-none} is not rhtas/sync"

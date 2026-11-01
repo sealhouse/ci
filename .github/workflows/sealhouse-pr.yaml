@@ -1,0 +1,37 @@
+# ci's own checks.
+name: sealhouse-pr
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  pr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Scripts
+        run: |
+          ci="${SEALHOUSE_CI:-}"
+          if [ -z "${ci}" ]; then
+            git clone -q "https://github.com/${GITHUB_REPOSITORY}.git" ci
+            git -C ci fetch -q origin "${GITHUB_SHA}"
+            git -C ci checkout -q --detach FETCH_HEAD
+            ci="${PWD}/ci"
+          fi
+          echo "CI_DIR=${ci}" >>"${GITHUB_ENV}"
+          "${ci}/hack/install-go.sh"
+      - name: Toolchain
+        run: '"${CI_DIR}/hack/tools.sh"'
+      - name: Workflows
+        run: go -C "${CI_DIR}" run "$(sed -n 's/^ACTIONLINT=//p' "${CI_DIR}/tools.lock")" -shellcheck= -pyflakes=
+      - name: Syntax
+        run: bash -n "${CI_DIR}"/hack/*.sh "${CI_DIR}"/test/*.sh
+      - name: Fork sync
+        run: '"${CI_DIR}/test/test-fork-sync.sh"'
+      - name: Replaces
+        run: '"${CI_DIR}/test/test-replaces.sh"'
+      - name: GitHub scripts
+        run: '"${CI_DIR}/test/test-github.sh"'

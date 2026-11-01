@@ -1,0 +1,180 @@
+# The alpha head on every cluster, the soak, vulnerability scans and rebuilds.
+name: sealhouse-nightly
+
+on:
+  schedule:
+    - cron: '40 8 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency: sealhouse-nightly
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Scripts
+        run: |
+          git clone -q "https://github.com/${GITHUB_REPOSITORY}.git" ci
+          git -C ci checkout -q --detach "${GITHUB_SHA}"
+          ci/hack/install-go.sh
+      - name: Toolchain
+        run: ci/hack/tools.sh
+      - name: MicroShift
+        run: ci/hack/watch-microshift.sh
+
+  kind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['1.33', '1.34', '1.35']
+    env:
+      KIND_VERSION: ${{ matrix.version }}
+    steps:
+      - name: Scripts
+        run: |
+          git clone -q "https://github.com/${GITHUB_REPOSITORY}.git" ci
+          git -C ci checkout -q --detach "${GITHUB_SHA}"
+          ci/hack/install-go.sh
+      - name: Toolchain
+        run: ci/hack/tools.sh
+      - name: Alpha head
+        run: |
+          git clone -q https://github.com/sealhouse/pqc-catalog.git pqc-catalog
+          echo "CATALOG_REPO=${PWD}/pqc-catalog" >>"${GITHUB_ENV}"
+          echo "OPERATOR_REPO=https://github.com/sealhouse/secure-sign-pqc-operator.git" >>"${GITHUB_ENV}"
+      - name: Cluster
+        run: |
+          ci/hack/cluster-up.sh
+          echo "E2E_KUBECONFIG=${PWD}/ci/.state/sealhouse-${KIND_VERSION//./-}.kubeconfig" >>"${GITHUB_ENV}"
+      - name: UIDs
+        run: KUBECONFIG="${E2E_KUBECONFIG}" KUBE_CONTEXT="kind-sealhouse-${KIND_VERSION//./-}" ci/hack/test-arbitrary-uid.sh
+      - name: E2E
+        run: ci/hack/e2e-alpha.sh "${E2E_KUBECONFIG}" "kind-sealhouse-${KIND_VERSION//./-}" "${PWD}/e2e"
+      - name: Cluster state
+        if: failure()
+        run: |
+          KUBECONFIG="${E2E_KUBECONFIG}" kubectl get pods -A -o wide
+          KUBECONFIG="${E2E_KUBECONFIG}" kubectl get events -A --sort-by=.lastTimestamp | tail -50
+
+  microshift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['4.20', '4.21', '4.22']
+    env:
+      MICROSHIFT_VERSION: ${{ matrix.version }}
+    steps:
+      - name: Scripts
+        run: |
+          git clone -q "https://github.com/${GITHUB_REPOSITORY}.git" ci
+          git -C ci checkout -q --detach "${GITHUB_SHA}"
+          ci/hack/install-go.sh
+      - name: Toolchain
+        run: ci/hack/tools.sh
+      - name: Alpha head
+        run: |
+          git clone -q https://github.com/sealhouse/pqc-catalog.git pqc-catalog
+          echo "CATALOG_REPO=${PWD}/pqc-catalog" >>"${GITHUB_ENV}"
+          echo "OPERATOR_REPO=https://github.com/sealhouse/secure-sign-pqc-operator.git" >>"${GITHUB_ENV}"
+      - name: Cluster
+        run: |
+          ci/hack/microshift-up.sh
+          echo "E2E_KUBECONFIG=${PWD}/ci/.state/microshift.kubeconfig" >>"${GITHUB_ENV}"
+      - name: E2E
+        run: ci/hack/e2e-alpha.sh "${E2E_KUBECONFIG}" microshift-sealhouse "${PWD}/e2e"
+      - name: Cluster state
+        if: failure()
+        run: |
+          KUBECONFIG="${E2E_KUBECONFIG}" kubectl get pods -A -o wide
+          KUBECONFIG="${E2E_KUBECONFIG}" kubectl get events -A --sort-by=.lastTimestamp | tail -50
+
+  soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    permissions:
+      contents: write
+    steps:
+      - name: Scripts
+        run: |
+          git clone -q "https://github.com/${GITHUB_REPOSITORY}.git" ci
+          git -C ci checkout -q --detach "${GITHUB_SHA}"
+          ci/hack/install-go.sh
+      - name: Toolchain
+        run: ci/hack/tools.sh
+      - name: Alpha head
+        run: |
+          git clone -q https://github.com/sealhouse/pqc-catalog.git pqc-catalog
+          echo "CATALOG_REPO=${PWD}/pqc-catalog" >>"${GITHUB_ENV}"
+          echo "OPERATOR_REPO=https://github.com/sealhouse/secure-sign-pqc-operator.git" >>"${GITHUB_ENV}"
+      - name: Trend
+        run: |
+          if git -C ci fetch -q origin soak-trend; then
+            git -C ci show FETCH_HEAD:soak-trend.tsv >soak-trend.tsv || true
+          fi
+      - name: Soak
+        run: ci/hack/soak.sh "${PWD}/e2e" "${PWD}/soak" "${PWD}/soak-trend.tsv"
+      - name: Record
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ ! -s soak-trend.tsv ] || ci/hack/soak-record.sh soak-trend.tsv
+
+  vulns:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Scripts
+        run: |
+          git clone -q "https://github.com/${GITHUB_REPOSITORY}.git" ci
+          git -C ci checkout -q --detach "${GITHUB_SHA}"
+          ci/hack/install-go.sh
+      - name: Toolchain
+        run: ci/hack/tools.sh
+      - name: Scan
+        run: |
+          failed=0
+          while read -r repo ref; do
+            echo "== ${repo}"
+            git clone -q --depth 1 -b "${ref}" "https://github.com/sealhouse/${repo}.git" "tree-${repo}"
+            if ci/hack/vulncheck.sh "tree-${repo}" "out/${repo}"; then
+              grep -E '^(fix available|no fix yet)' "out/${repo}/summary" >>"${GITHUB_STEP_SUMMARY}" || true
+            else
+              failed=1
+            fi
+          done < <(awk '!/^#/ { print $1, "rhtas/main" }' ci/forks.lock; echo secure-sign-pqc-operator main)
+          exit "${failed}"
+
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        fork: [cosign, fulcio, rekor-tiles, timestamp-authority]
+    steps:
+      - name: Scripts
+        run: |
+          git clone -q "https://github.com/${GITHUB_REPOSITORY}.git" ci
+          git -C ci checkout -q --detach "${GITHUB_SHA}"
+          ci/hack/install-go.sh
+      - name: Toolchain
+        run: ci/hack/tools.sh
+      - name: Registry
+        run: |
+          image="$(grep '^REGISTRY=' ci/images.lock | cut -d= -f2-)"
+          docker run -d --rm -p 127.0.0.1:5002:5000 --name rebuild-registry "${image}"
+      - name: Rebuild
+        env:
+          FORK: ${{ matrix.fork }}
+          REBUILD_REGISTRY: localhost:5002
+        run: |
+          git clone -q --filter=blob:none -b rhtas/main "https://github.com/sealhouse/${FORK}.git" "${FORK}"
+          ci/hack/rebuild-check.sh "${PWD}/${FORK}" ghcr.io

@@ -1,0 +1,44 @@
+# Emulates OpenShift's restricted-v2 SCC UID assignment on kind.
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicy
+metadata:
+  name: sealhouse-arbitrary-uid
+spec:
+  paramKind:
+    apiVersion: v1
+    kind: ConfigMap
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["pods"]
+  failurePolicy: Fail
+  reinvocationPolicy: IfNeeded
+  mutations:
+    - patchType: ApplyConfiguration
+      applyConfiguration:
+        expression: >
+          Object{
+            spec: Object.spec{
+              securityContext: Object.spec.securityContext{
+                runAsUser: int(params.data.uid),
+                runAsGroup: 0,
+                fsGroup: int(params.data.fsGroup)
+              }
+            }
+          }
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicyBinding
+metadata:
+  name: sealhouse-arbitrary-uid
+spec:
+  policyName: sealhouse-arbitrary-uid
+  paramRef:
+    name: sealhouse-scc
+    parameterNotFoundAction: Deny
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        sealhouse.dev/scc: restricted

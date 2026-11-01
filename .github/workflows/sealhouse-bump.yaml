@@ -1,0 +1,40 @@
+# Opens the operator bump PR for an image a fork's merge lane pushed.
+name: sealhouse-bump
+
+on:
+  workflow_dispatch:
+    inputs:
+      fork:
+        required: true
+      commit:
+        required: true
+      image:
+        required: true
+      branch:
+        required: true
+
+permissions: {}
+
+concurrency: sealhouse-bump-${{ inputs.fork }}-${{ inputs.branch }}
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Scripts
+        run: |
+          git clone -q "https://github.com/${GITHUB_REPOSITORY}.git" ci
+          git -C ci checkout -q --detach "${GITHUB_SHA}"
+          ci/hack/install-go.sh
+      - name: Toolchain
+        run: ci/hack/tools.sh
+      - name: Bump
+        env:
+          BOT_APP_ID: ${{ secrets.SEALHOUSE_BOT_APP_ID }}
+          BOT_APP_KEY: ${{ secrets.SEALHOUSE_BOT_APP_KEY }}
+          FORK: ${{ inputs.fork }}
+          COMMIT: ${{ inputs.commit }}
+          IMAGE: ${{ inputs.image }}
+          BRANCH: ${{ inputs.branch }}
+        run: ci/hack/bump-pr.sh "${FORK}" "${COMMIT}" "${IMAGE}" "${BRANCH}"

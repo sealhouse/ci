@@ -1,0 +1,26 @@
+# Updates the next bump PR after an operator merge, and hourly in case a request was lost.
+name: sealhouse-bump-update
+
+on:
+  schedule:
+    - cron: '41 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency: sealhouse-bump-update
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Scripts
+        run: |
+          git clone -q "https://github.com/${GITHUB_REPOSITORY}.git" ci
+          git -C ci checkout -q --detach "${GITHUB_SHA}"
+      - name: Update bump PRs
+        env:
+          BOT_APP_ID: ${{ secrets.SEALHOUSE_BOT_APP_ID }}
+          BOT_APP_KEY: ${{ secrets.SEALHOUSE_BOT_APP_KEY }}
+        run: ci/hack/bump-update.sh

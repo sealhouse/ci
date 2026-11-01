@@ -1,0 +1,2 @@
+# <module> <fork module> <fork version> <reason> <drop when>
+# github.com/x/y github.com/sealhouse/y v1.2.4-rhtas.1 CVE-2026-1 upstream>=v1.2.5

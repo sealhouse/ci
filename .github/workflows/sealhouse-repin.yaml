@@ -1,0 +1,32 @@
+# Moves every caller to the ci commit just merged.
+name: sealhouse-repin
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - test/**
+      - .github/workflows/sealhouse-*.yaml
+      - forks.lock
+      - replaces.lock
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency: sealhouse-repin
+
+jobs:
+  repin:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Scripts
+        run: |
+          git clone -q "https://github.com/${GITHUB_REPOSITORY}.git" ci
+          git -C ci checkout -q --detach "${GITHUB_SHA}"
+      - name: Pin
+        env:
+          BOT_APP_ID: ${{ secrets.SEALHOUSE_BOT_APP_ID }}
+          BOT_APP_KEY: ${{ secrets.SEALHOUSE_BOT_APP_KEY }}
+        run: ci/hack/repin.sh "${GITHUB_SHA}"

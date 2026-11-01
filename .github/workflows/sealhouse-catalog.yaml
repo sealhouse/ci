@@ -1,0 +1,32 @@
+# Records the alpha catalog the operator's merge lane promoted.
+name: sealhouse-catalog
+
+on:
+  workflow_dispatch:
+    inputs:
+      head-env:
+        description: the catalog's head.env, base64
+        required: true
+
+permissions: {}
+
+concurrency: sealhouse-catalog
+
+jobs:
+  catalog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Scripts
+        run: |
+          git clone -q "https://github.com/${GITHUB_REPOSITORY}.git" ci
+          git -C ci checkout -q --detach "${GITHUB_SHA}"
+          ci/hack/install-go.sh
+      - name: Toolchain
+        run: ci/hack/tools.sh
+      - name: Record
+        env:
+          BOT_APP_ID: ${{ secrets.SEALHOUSE_BOT_APP_ID }}
+          BOT_APP_KEY: ${{ secrets.SEALHOUSE_BOT_APP_KEY }}
+          HEAD_ENV: ${{ inputs.head-env }}
+        run: ci/hack/record-catalog.sh "${HEAD_ENV}"
