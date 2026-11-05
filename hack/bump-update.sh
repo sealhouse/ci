@@ -13,7 +13,7 @@ pulls="$(gh_api GET "/repos/${repo}/pulls?state=open&base=main&per_page=100" |
   jq -r '[.[] | select(.head.ref | startswith("bump/") or startswith("ci-pin/"))] | sort_by(.number) | .[] | "\(.number) \(.head.ref) \(.head.sha)"')"
 while read -r number ref sha; do
   [ -n "${number}" ] || continue
-  checks="$(gh_api GET "/repos/${repo}/commits/${sha}/check-runs?per_page=100" | jq .check_runs)"
+  checks="$(gh_api GET "/repos/${repo}/commits/${sha}/check-runs?per_page=100" | jq '[.check_runs[] | select(.name | contains("hand-off") | not)]')"
   if [ "$(jq length <<<"${checks}")" -eq 0 ] || [ "$(jq '[.[] | select(.status != "completed")] | length' <<<"${checks}")" -gt 0 ]; then
     echo "PR ${number} (${ref}) is waiting for its checks"
     exit 0

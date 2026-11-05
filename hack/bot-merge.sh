@@ -52,7 +52,7 @@ while read -r number ref sha author; do
     echo "${repo}: PR ${number} (${ref}) has a commit ${bot} did not sign: it needs a maintainer"
     continue
   fi
-  checks="$(gh_api GET "/repos/${full}/commits/${sha}/check-runs?per_page=100" | jq .check_runs)"
+  checks="$(gh_api GET "/repos/${full}/commits/${sha}/check-runs?per_page=100" | jq '[.check_runs[] | select(.name | contains("hand-off") | not)]')"
   if [ "$(jq length <<<"${checks}")" -eq 0 ] || [ "$(jq '[.[] | select(.status != "completed")] | length' <<<"${checks}")" -gt 0 ]; then
     echo "${repo}: PR ${number} (${ref}) is waiting for its checks"
     continue

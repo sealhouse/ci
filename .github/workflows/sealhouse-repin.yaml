@@ -9,6 +9,8 @@ on:
       - .github/workflows/sealhouse-*.yaml
       - forks.lock
       - replaces.lock
+      - README.md
+      - hack/status.sh
   workflow_dispatch:
 
 permissions: {}

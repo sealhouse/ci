@@ -28,6 +28,11 @@ on:
         description: make target for e2e tests
         type: string
         default: ''
+    secrets:
+      dispatch-app-id:
+        required: false
+      dispatch-app-key:
+        required: false
 
 permissions: {}
 
@@ -118,3 +123,33 @@ jobs:
       - name: Workspace removable
         if: always()
         run: chmod -R u+w .
+
+  # Its own job, so the dispatch key never shares a runner with the PR's code.
+  hand-off:
+    needs: pr
+    if: >-
+      github.event_name == 'pull_request' && (github.event.pull_request.head.ref == 'rhtas/sync' ||
+      startsWith(github.event.pull_request.head.ref, 'ci-pin/') || startsWith(github.event.pull_request.head.ref, 'replaces/'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Hand off
+        env:
+          CI_REF: ${{ inputs.ci-ref }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          DISPATCH_APP_ID: ${{ secrets.dispatch-app-id }}
+          DISPATCH_APP_KEY: ${{ secrets.dispatch-app-key }}
+        run: |
+          set -euo pipefail
+          [ -z "${SEALHOUSE_CI:-}" ] || exit 0
+          if [ -z "${DISPATCH_APP_ID}" ]; then
+            echo "::notice::the caller passes no dispatch App; the hourly runs pick this PR up"
+            exit 0
+          fi
+          git clone -q https://github.com/sealhouse/ci.git "${RUNNER_TEMP}/ci"
+          git -C "${RUNNER_TEMP}/ci" checkout -q --detach "${CI_REF}"
+          if [ "${HEAD_REF}" = rhtas/sync ]; then
+            "${RUNNER_TEMP}/ci/hack/request-lane.sh" sealhouse-sync.yaml finish=true
+          else
+            "${RUNNER_TEMP}/ci/hack/request-lane.sh" sealhouse-bump-update.yaml
+          fi

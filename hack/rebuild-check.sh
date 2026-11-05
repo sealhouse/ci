@@ -18,7 +18,24 @@ if ! pushed="$(crane digest "${crane_args[@]}" "${published}/sealhouse/${image}:
   echo "${name}: no ${image}:${tag} in ${published} (its merge lane pushed none); skipped"
   exit 0
 fi
-rebuilt="$(REGISTRY_HOST="${REBUILD_REGISTRY:?}" BUILD_NO_CACHE=1 "${ci_wt}/hack/build-image.sh" "${tree}" "${tag}" | tail -1)"
+# The merge lane's describe, which tags the sync has pushed since would change. It must still describe HEAD.
+version="$(crane config "${crane_args[@]}" "${published}/sealhouse/${image}@${pushed}" | jq -r '.config.Labels["org.opencontainers.image.version"] // ""')"
+describes_head() {
+  if [[ "$1" =~ ^(.+)-([0-9]+)-g([0-9a-f]+)$ ]]; then
+    [[ "${sha}" == "${BASH_REMATCH[3]}"* ]] &&
+      git -C "${tree}" rev-parse -q --verify "refs/tags/${BASH_REMATCH[1]}^{commit}" >/dev/null &&
+      [ "$(git -C "${tree}" rev-list --count "refs/tags/${BASH_REMATCH[1]}..HEAD")" = "${BASH_REMATCH[2]}" ]
+  elif [[ "$1" =~ ^[0-9a-f]{7,}$ ]]; then
+    [[ "${sha}" == "$1"* ]]
+  else
+    [ -n "$1" ] && [ "$(git -C "${tree}" rev-parse -q --verify "refs/tags/$1^{commit}")" = "${sha}" ]
+  fi
+}
+if ! describes_head "${version}"; then
+  echo "${name}: ${image}:${tag} records version '${version}', which does not describe ${sha:0:12}" >&2
+  exit 1
+fi
+rebuilt="$(BUILD_VERSION="${version}" REGISTRY_HOST="${REBUILD_REGISTRY:?}" BUILD_NO_CACHE=1 "${ci_wt}/hack/build-image.sh" "${tree}" "${tag}" | tail -1)"
 if [ "${rebuilt#*@}" != "${pushed}" ]; then
   echo "${name}: the rebuild is ${rebuilt#*@}, the merge lane pushed ${pushed}" >&2
   exit 1
