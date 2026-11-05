@@ -26,15 +26,12 @@ on:
         description: the pushed image, by digest
         value: ${{ jobs.merge.outputs.image }}
 
-permissions: {}
-
+# No permissions here: the job runs with what its caller grants, packages: write only where it pushes.
 jobs:
   merge:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     concurrency: merge-${{ github.ref }}
-    permissions:
-      packages: write
     outputs:
       image: ${{ steps.image.outputs.image }}
     env:

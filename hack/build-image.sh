@@ -34,7 +34,7 @@ docker build "${cache[@]}" -f "${repo}/${CONTAINERFILE}" \
   --provenance=false \
   --label org.opencontainers.image.revision="${commit}" \
   --label org.opencontainers.image.version="${version}" \
-  --output "type=image,name=${ref},rewrite-timestamp=true" "${repo}" >&2
+  --output "type=image,name=${ref},rewrite-timestamp=true,unpack=false,oci-mediatypes=true" "${repo}" >&2
 
 "${root}/hack/test-image.sh" "${repo}" "${ref}" >&2
 
