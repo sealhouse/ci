@@ -1,4 +1,4 @@
-# Updates the next bump PR after an operator merge, and hourly in case a request was lost.
+# Merges green ci-pin and replaces PRs, then updates the next bump PR, after an operator merge and hourly in case a request was lost.
 name: sealhouse-bump-update
 
 on:
@@ -19,7 +19,13 @@ jobs:
         run: |
           git clone -q "https://github.com/${GITHUB_REPOSITORY}.git" ci
           git -C ci checkout -q --detach "${GITHUB_SHA}"
+      - name: Merge bot PRs
+        env:
+          BOT_APP_ID: ${{ secrets.SEALHOUSE_BOT_APP_ID }}
+          BOT_APP_KEY: ${{ secrets.SEALHOUSE_BOT_APP_KEY }}
+        run: ci/hack/bot-merge.sh
       - name: Update bump PRs
+        if: ${{ !cancelled() }}
         env:
           BOT_APP_ID: ${{ secrets.SEALHOUSE_BOT_APP_ID }}
           BOT_APP_KEY: ${{ secrets.SEALHOUSE_BOT_APP_KEY }}

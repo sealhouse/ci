@@ -8,7 +8,7 @@ source "${root}/hack/github.sh"
 
 fork="$1" upstream="$2" branch="$3"
 repo="${gh_org}/${fork}"
-GH_TOKEN="$(gh_app_token "${SYNC_APP_ID:?}" "${SYNC_APP_KEY:?}" '{"contents":"write","pull_requests":"write","workflows":"write"}' "${fork}")"
+GH_TOKEN="$(gh_app_token "${SYNC_APP_ID:?}" "${SYNC_APP_KEY:?}" '{"contents":"write","pull_requests":"write","workflows":"write","actions":"write"}' "${fork}")"
 export GH_TOKEN
 base="${SEALHOUSE_GIT_BASE:-https://github.com/${gh_org}}"
 export GIT_AUTHOR_NAME=sealhouse-sync GIT_AUTHOR_EMAIL=sealhouse-sync@sealhouse.invalid
@@ -33,8 +33,13 @@ g push -q origin "refs/heads/${branch}:refs/heads/${branch}"
 mapfile -t tags < <(g for-each-ref --merged "refs/heads/${branch}" --format='%(refname)' refs/tags)
 if [ "${#tags[@]}" -gt 0 ]; then g push -q origin "${tags[@]}"; fi
 
-g rev-parse -q --verify refs/heads/rhtas/sync >/dev/null || exit 0
+if ! g rev-parse -q --verify refs/heads/rhtas/sync >/dev/null; then
+  gh_disable_foreign_workflows "${repo}"
+  exit 0
+fi
 g push -q -f origin refs/heads/rhtas/sync:refs/heads/rhtas/sync
+# Before the PR, so the upstream workflows it brings in do not run on it.
+gh_disable_foreign_workflows "${repo}"
 open="$(gh_api GET "/repos/${repo}/pulls?state=open&base=rhtas/main&head=${gh_org}:rhtas/sync" | jq length)"
 if [ "${open}" -eq 0 ]; then
   jq -n --arg t "Sync upstream ${branch} $(g rev-parse --short "refs/heads/${branch}")" \

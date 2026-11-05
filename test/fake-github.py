@@ -72,9 +72,21 @@ class H(BaseHTTPRequestHandler):
             state["pulls"].append(pr)
             return self.reply(201, pr)
         if method == "GET" and rest.startswith("/compare/"):
-            return self.reply(200, {"behind_by": state.get("behind", {}).get(rest.split("...")[1], 0)})
+            return self.reply(200, {"behind_by": state.get("behind", {}).get(rest.split("...")[1], 0),
+                                    "status": state.get("compare_status", {}).get(rest[len("/compare/"):], "ahead")})
         if method == "GET" and rest.endswith("/check-runs"):
             return self.reply(200, {"check_runs": state.get("checks_by_sha", {}).get(rest.split("/")[2], state["checks"])})
+        if method == "POST" and rest.endswith("/requested_reviewers") and state.get("reviews_refused"):
+            return self.reply(422, {"message": "Reviews may only be requested from collaborators."})
+        pr = re.match(r"/pulls/(\d+)/(commits|files|merge)$", rest)
+        if pr and method == "GET":
+            return self.reply(200, state.get("pr_" + pr.group(2), {}).get(pr.group(1), []))
+        if pr and method == "PUT":
+            if pr.group(1) in state.get("merge_refused", []):
+                return self.reply(405, {"message": "Required status check is expected."})
+            return self.reply(200, {"merged": True})
+        if method == "GET" and rest == "/actions/workflows":
+            return self.reply(200, {"workflows": state.get("workflows", [])})
         return self.reply(200, {})
 
     def do_GET(self):

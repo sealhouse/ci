@@ -202,6 +202,14 @@ for c in "${picks[@]}"; do
     continue
   fi
   if ! git -C "${work}" cherry-pick --empty=drop "${c}" >/dev/null 2>&1; then
+    # A carry that deletes a file upstream has since changed still deletes it.
+    if [ -z "$(git -C "${work}" status --porcelain | grep -E '^(U[^D]|[^U]U|DD|AA)')" ] &&
+      [ -n "$(git -C "${work}" status --porcelain | grep '^UD ')" ]; then
+      git -C "${work}" status --porcelain | sed -n 's/^UD //p' | xargs git -C "${work}" rm -q --
+      git -C "${work}" -c core.editor=true cherry-pick --continue >/dev/null
+      echo "replayed ${short} $(g log -1 --format=%s "${c}") (kept its deletes over upstream changes)"
+      continue
+    fi
     echo "conflict replaying ${short} $(g log -1 --format=%s "${c}"):" >&2
     git -C "${work}" diff --name-only --diff-filter=U >&2
     git -C "${work}" cherry-pick --abort

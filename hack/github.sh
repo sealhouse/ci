@@ -2,6 +2,7 @@
 
 gh_api_url="${GITHUB_API_URL:-https://api.github.com}"
 gh_org="${SEALHOUSE_ORG:-sealhouse}"
+gh_review_team="${SEALHOUSE_REVIEW_TEAM:-maintainers}"
 
 b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
 
@@ -54,6 +55,23 @@ gh_file() {
     *) echo "GET $1 $2: ${code}" >&2; rm -f "${out}"; return 1 ;;
   esac
   rm -f "${out}"
+}
+
+# gh_disable_foreign_workflows REPO disables every active workflow but sealhouse-*.yaml and GitHub's dynamic ones.
+gh_disable_foreign_workflows() {
+  local repo="$1" id path
+  gh_api GET "/repos/${repo}/actions/workflows?per_page=100" |
+    jq -r '.workflows[] | select(.state == "active" and (.path | test("^\\.github/workflows/sealhouse-|^dynamic/") | not)) | "\(.id) \(.path)"' |
+    while read -r id path; do
+      gh_api PUT "/repos/${repo}/actions/workflows/${id}/disable" >/dev/null
+      echo "${repo#*/}: disabled ${path}"
+    done
+}
+
+# gh_request_review REPO NUMBER asks the review team for a review, and only warns if GitHub refuses.
+gh_request_review() {
+  jq -n --arg t "${gh_review_team}" '{team_reviewers: [$t]}' | gh_api POST "/repos/$1/pulls/$2/requested_reviewers" - >/dev/null ||
+    echo "::warning::could not request a review from ${gh_org}/${gh_review_team} on $1#$2" >&2
 }
 
 # gh_graphql QUERY ID runs a mutation on one node id.

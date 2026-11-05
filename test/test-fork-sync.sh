@@ -220,3 +220,31 @@ if "${sync}" --check "${fork}" 2>"${t}/err"; then fail "--check passed a bad Ci-
 git -C "${fork}" reset -q --hard HEAD~1
 git -C "${fork}" switch -q main
 echo "ok: only the last Ci-Pin carry survives a sync"
+
+# 8. A carry that deletes a file keeps it deleted when upstream changes it; other conflicts stop the sync.
+git -C "${fork}" branch -q -D rhtas/sync
+echo v1 >"${up}/dependabot.yml"
+echo v1 >"${up}/README"
+git -C "${up}" add -A
+git -C "${up}" commit -q -m "upstream: dependabot and readme"
+"${sync}" "${fork}" >/dev/null
+"${sync}" --merge "${fork}" >/dev/null
+git -C "${fork}" switch -q rhtas/main
+git -C "${fork}" rm -q dependabot.yml
+git -C "${fork}" commit -q -m "UPSTREAM: <carry>: Remove the Dependabot config"
+git -C "${fork}" switch -q main
+echo v2 >"${up}/dependabot.yml"
+git -C "${up}" commit -q -am "upstream: bump dependabot"
+out="$("${sync}" "${fork}")" || fail "a delete carry stopped the sync: ${out}"
+grep -q "^replayed .*Remove the Dependabot config (kept its deletes" <<<"${out}" || fail "delete carry not reported: ${out}"
+if git -C "${fork}" cat-file -e rhtas/sync:dependabot.yml 2>/dev/null; then fail "the sync brought dependabot.yml back"; fi
+git -C "${fork}" branch -q -D rhtas/sync
+git -C "${fork}" switch -q rhtas/main
+echo carried >"${fork}/README"
+git -C "${fork}" commit -q -am "UPSTREAM: <carry>: readme"
+git -C "${fork}" switch -q main
+echo v2 >"${up}/README"
+git -C "${up}" commit -q -am "upstream: readme"
+if "${sync}" "${fork}" >/dev/null 2>"${t}/err"; then fail "a content conflict did not stop the sync"; fi
+grep -q 'conflict replaying .*readme' "${t}/err" || fail "content conflict not reported: $(cat "${t}/err")"
+echo "ok: a delete carry survives upstream changes, and a content conflict still stops the sync"

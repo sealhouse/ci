@@ -23,7 +23,7 @@ short="${commit:0:12}"
 tagged="$(crane digest "${crane_args[@]}" "${registry}/${gh_org}/${component}:${branch//\//-}-${short}")"
 [ "${tagged}" = "${digest}" ] || { echo "${component} ${branch} ${short} is ${tagged}, not ${digest}" >&2; exit 1; }
 
-GH_TOKEN="$(gh_app_token "${BOT_APP_ID:?}" "${BOT_APP_KEY:?}" '{"contents":"write","pull_requests":"write"}' secure-sign-pqc-operator)"
+GH_TOKEN="$(gh_app_token "${BOT_APP_ID:?}" "${BOT_APP_KEY:?}" '{"contents":"write","pull_requests":"write","members":"read"}' secure-sign-pqc-operator)"
 export GH_TOKEN
 
 case "${branch}" in
@@ -52,6 +52,7 @@ new="$(gh_commit "${operator}" main "Bump the ${version} ${component} image to $
 jq -n --arg r "refs/heads/${bump}" --arg s "${new}" '{ref: $r, sha: $s}' | gh_api POST "/repos/${operator}/git/refs" - >/dev/null
 pr="$(jq -n --arg t "Bump the ${version} ${component} image to ${fork} ${branch} ${short}" --arg h "${bump}" \
   '{title: $t, head: $h, base: "main"}' | gh_api POST "/repos/${operator}/pulls" -)"
+gh_request_review "${operator}" "$(jq -r .number <<<"${pr}")"
 echo "operator PR $(jq -r .number <<<"${pr}"): ${bump}"
 
 # A newer image makes an open bump of the same key stale.

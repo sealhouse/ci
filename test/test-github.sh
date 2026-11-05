@@ -66,7 +66,7 @@ state "$(jq -n --arg f "${file}" '{files: {($f): "# Pins.\nTSA_IMAGE=old\nOTHER_
           {number: 8, node_id: "PR_keep", head: {ref: "bump/2.0-fulcio-image-aaaaaaaaaaaa", sha: "e"}}]}')"
 reset_log
 "${hack}/bump-pr.sh" timestamp-authority "${commit}" "${image}" rhtas/main >/dev/null
-calls POST access_tokens | jq -e '.body == {permissions: {contents: "write", pull_requests: "write"}, repositories: ["secure-sign-pqc-operator"]}' >/dev/null || fail "bot token scope"
+calls POST access_tokens | jq -e '.body == {permissions: {contents: "write", pull_requests: "write", members: "read"}, repositories: ["secure-sign-pqc-operator"]}' >/dev/null || fail "bot token scope"
 calls POST /git/blobs | jq -r .body.content | grep -qx "TSA_IMAGE=${image}" || fail "the blob does not pin the image"
 calls POST /git/blobs | jq -r .body.content | grep -qx 'OTHER_IMAGE=keep' || fail "the blob lost a pin"
 calls POST /git/commits | jq -e --arg s "Bump the 2.0 tsa image to timestamp-authority rhtas/main ${commit:0:12}" \
@@ -77,7 +77,16 @@ calls PATCH 'pulls/9$' | jq -e '.body.state == "closed"' >/dev/null || fail "sta
 calls DELETE 'bump/2.0-tsa-image-aaaaaaaaaaaa$' | grep -q . || fail "stale branch left"
 [ -z "$(calls PATCH 'pulls/8$')" ] || fail "closed another image's PR"
 calls POST /graphql | jq -e '.body.variables.id == "PR_new" and (.body.query | test("mergeMethod: SQUASH"))' >/dev/null || fail "auto-merge"
-ok "bump-pr opens one PR, closes the stale one and asks for auto-merge"
+calls POST 'operator/pulls/[0-9]+/requested_reviewers$' | jq -e '.body == {team_reviewers: ["maintainers"]}' >/dev/null || fail "bump-pr review request"
+ok "bump-pr opens one PR, asks the maintainers for a review, closes the stale one and asks for auto-merge"
+
+state "$(jq -n --arg f "${file}" '{files: {($f): "TSA_IMAGE=old\n"}, pulls: [], reviews_refused: true}')"
+reset_log
+"${hack}/bump-pr.sh" timestamp-authority "${commit}" "${image}" rhtas/main >"${t}/out" 2>&1 || fail "a refused review request stopped bump-pr"
+grep -q '::warning::could not request a review from sealhouse/maintainers' "${t}/out" || fail "no warning for a refused review request"
+calls POST /graphql | grep -q . || fail "a refused review request skipped auto-merge"
+state '{"reviews_refused": false}'
+ok "bump-pr warns and carries on when GitHub refuses the review request"
 
 state "$(jq -n --arg f "${file}" '{files: {($f): "TSA_IMAGE=old\n"}, pulls: [], graphql_error: true}')"
 expect_fail "${hack}/bump-pr.sh" timestamp-authority "${commit}" "${image}" rhtas/main
@@ -126,6 +135,67 @@ reset_log
 calls PUT 'pulls/4/update-branch$' | grep -q . || fail "ci-pin PR not updated"
 calls POST access_tokens | jq -e '.body.permissions.workflows == "write"' >/dev/null || fail "main can carry workflow changes"
 ok "bump-update also takes ci-pin PRs"
+
+# bot-merge.
+p40="$(printf 'd%.0s' {1..40})" o40="$(printf 'e%.0s' {1..40})" x40="$(printf 'f%.0s' {1..40})"
+botpr() { printf '{"number": %s, "node_id": "x", "user": {"login": "%s"}, "head": {"ref": "%s", "sha": "%s"}}' "$1" "$3" "$2" "sha$1"; }
+signed() { jq -nc --arg m "$1" --arg a "${2:-sealhouse-bot[bot]}" --argjson v "${3:-true}" '[{author: {login: $a}, committer: {login: "web-flow"}, commit: {message: $m, verification: {verified: $v}}}]'; }
+pinfile() { # FILE OLD NEW [EXTRA_LINE]
+  jq -nc --arg f "$1" --arg o "$2" --arg n "$3" --arg x "${4:-}" '{filename: $f, status: "modified",
+    patch: ("@@ -1,4 +1,4 @@\n jobs:\n-    uses: sealhouse/ci/.github/workflows/pr.yaml@\($o)\n+    uses: sealhouse/ci/.github/workflows/pr.yaml@\($n)\n     with:\n-      ci-ref: \($o)\n+      ci-ref: \($n)" + (if $x == "" then "" else "\n+" + $x end))}'
+}
+pin_msg="UPSTREAM: <drop>: Pin ci ${p40:0:12}
+
+Ci-Pin: ${p40}"
+merge_with() { # PULLS EXTRA_STATE
+  state "$(jq -nc --argjson p "$1" --argjson g "${green}" --argjson x "${2:-{\}}" '{pulls: $p, checks: $g, checks_by_sha: {}, compare_status: {}, merge_refused: [], pr_commits: {}, pr_files: {}} + $x')"
+  reset_log
+  "${hack}/bot-merge.sh" app rhtas/main >"${t}/out"
+}
+good_pin="$(pinfile .github/workflows/sealhouse-pr.yaml "${o40}" "${p40}")"
+good_rep='[{"filename": "go.mod", "status": "modified"}, {"filename": "tools/go.sum", "status": "modified"}]'
+merge_with "[$(botpr 4 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]'), $(botpr 6 replaces/abc 'sealhouse-bot[bot]'), $(botpr 7 bump/2.0-tsa-image-abc 'sealhouse-bot[bot]'), $(botpr 8 ci-pin/xyz someone)]" \
+  "$(jq -nc --argjson pc "$(signed "${pin_msg}")" --argjson rc "$(signed $'UPSTREAM: <drop>: Replace modules\n\nGo-Replaces: replaces.lock')" \
+    --argjson pf "[${good_pin}]" --argjson rf "${good_rep}" '{pr_commits: {"4": $pc, "6": $rc}, pr_files: {"4": $pf, "6": $rf}}')"
+calls POST access_tokens | jq -e '.body == {permissions: {contents: "write", pull_requests: "write", checks: "read", workflows: "write"}, repositories: ["app", "ci"]}' >/dev/null || fail "bot-merge token scope"
+calls PUT 'pulls/4/merge$' | jq -e --arg p "${p40}" '.body == {merge_method: "squash", sha: "sha4", commit_title: "UPSTREAM: <drop>: Pin ci \($p[0:12])", commit_message: "Ci-Pin: \($p)"}' >/dev/null || fail "ci-pin merge keeps its trailer"
+calls GET "ci/compare/${p40}...main" | grep -q . || fail "the pin was not checked against ci main"
+calls PUT 'pulls/6/merge$' | jq -e '.body.commit_message == "Go-Replaces: replaces.lock"' >/dev/null || fail "replaces merge keeps its trailer"
+[ -z "$(calls PUT 'pulls/(7|8)/merge$')" ] || fail "merged a bump or someone else's PR"
+grep -q 'PR 8 (ci-pin/xyz) is not from' "${t}/out" || fail "someone else's PR not reported"
+ok "bot-merge squashes green ci-pin and replaces PRs from the bot, keeping their trailers, and leaves bumps alone"
+
+refused() { # NAME PR_COMMITS PR_FILES [EXTRA_STATE]
+  merge_with "[$(botpr 4 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]')]" \
+    "$(jq -nc --argjson c "$2" --argjson f "$3" --argjson x "${4:-{\}}" '{pr_commits: {"4": $c}, pr_files: {"4": $f}} + $x')"
+  [ -z "$(calls PUT 'pulls/4/merge$')" ] || fail "merged $1"
+}
+refused "a commit someone else wrote" "$(signed "${pin_msg}" someone)" "[${good_pin}]"
+grep -q 'did not sign' "${t}/out" || fail "a foreign commit not reported"
+refused "an unverified commit" "$(signed "${pin_msg}" 'sealhouse-bot[bot]' false)" "[${good_pin}]"
+refused "an extra line in a caller" "$(signed "${pin_msg}")" "[$(pinfile .github/workflows/sealhouse-pr.yaml "${o40}" "${p40}" '    run: curl evil')]"
+grep -q 'changes more than the pin' "${t}/out" || fail "an extra line not reported"
+refused "another workflow" "$(signed "${pin_msg}")" "[${good_pin}, $(pinfile .github/workflows/release.yaml "${o40}" "${p40}")]"
+refused "a pin the branch does not name" "$(signed "${pin_msg}")" "[$(pinfile .github/workflows/sealhouse-pr.yaml "${o40}" "${x40}")]"
+refused "a pin off ci main" "$(signed "${pin_msg}")" "[${good_pin}]" "{\"compare_status\": {\"${p40}...main\": \"diverged\"}}"
+calls GET "ci/compare/${p40}...main" | grep -q . || fail "a pin off ci main was refused before the compare"
+refused "a red PR" "$(signed "${pin_msg}")" "[${good_pin}]" "{\"checks\": ${red}}"
+grep -q 'PR 4 .*needs a maintainer: pr / pr' "${t}/out" || fail "a red PR not reported"
+refused "a PR still running its checks" "$(signed "${pin_msg}")" "[${good_pin}]" "{\"checks\": ${running}}"
+grep -q 'waiting for its checks' "${t}/out" || fail "running checks not reported"
+merge_with "[$(botpr 6 replaces/abc 'sealhouse-bot[bot]')]" \
+  "$(jq -nc --argjson c "$(signed x)" '{pr_commits: {"6": $c}, pr_files: {"6": [{filename: "main.go", status: "modified"}]}}')"
+[ -z "$(calls PUT 'pulls/6/merge$')" ] || fail "merged a replaces PR that changes code"
+ok "bot-merge refuses foreign or unsigned commits, changes beyond the pin or go.mod, pins off ci main, and unfinished checks"
+
+merge_with "[$(botpr 4 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]'), {\"number\": 9, \"user\": {\"login\": \"sealhouse-sync[bot]\"}, \"head\": {\"ref\": \"rhtas/sync\", \"sha\": \"s\"}}]" \
+  "$(jq -nc --argjson c "$(signed "${pin_msg}")" --argjson f "[${good_pin}]" '{pr_commits: {"4": $c}, pr_files: {"4": $f}}')"
+[ -z "$(calls PUT merge)" ] || fail "merged under an open sync PR"
+grep -q 'waiting for the sync PR' "${t}/out" || fail "the sync wait not reported"
+merge_with "[$(botpr 4 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]')]" \
+  "$(jq -nc --argjson c "$(signed "${pin_msg}")" --argjson f "[${good_pin}]" '{pr_commits: {"4": $c}, pr_files: {"4": $f}, merge_refused: ["4"]}')"
+grep -q 'PR 4 .*could not merge yet' "${t}/out" || fail "a refused merge must wait, not fail"
+ok "bot-merge waits for an open sync PR and for a merge GitHub refuses"
 
 # repin
 pin="$(printf 'f%.0s' {1..40})"
@@ -256,9 +326,18 @@ ok "sync-fork mirrors upstream and its tags, keeps carry authors, and opens one 
 # sync-finish.
 sync_pr='{"number": 5, "node_id": "PR_sync", "head": {"ref": "rhtas/sync", "sha": "feed"}}'
 guard='{"name": "sync-merge-guard / sync-merge-guard", "status": "completed", "conclusion": "failure"}'
+workflows='[{"id": 1, "path": ".github/workflows/sealhouse-pr.yaml", "state": "active"},
+  {"id": 2, "path": ".github/workflows/ci.yml", "state": "active"},
+  {"id": 3, "path": ".github/workflows/release.yml", "state": "disabled_manually"},
+  {"id": 4, "path": "dynamic/dependabot/dependabot-updates", "state": "active"}]'
 reset_log
-state '{"pulls": []}'
-"${hack}/sync-finish.sh" app | grep -q 'no sync PR' || fail "no PR"
+state "{\"pulls\": [], \"workflows\": ${workflows}}"
+"${hack}/sync-finish.sh" app >"${t}/out"
+grep -q 'no sync PR' "${t}/out" || fail "no PR"
+grep -q 'disabled .github/workflows/ci.yml' "${t}/out" || fail "reports the disabled workflow"
+[ "$(calls PUT '/actions/workflows/[0-9]+/disable$' | jq -r .path)" = /repos/sealhouse/app/actions/workflows/2/disable ] ||
+  fail "disables only the active upstream workflow, even with no sync PR"
+state '{"workflows": []}'
 state "{\"pulls\": [${sync_pr}], \"checks\": [${guard}]}"
 "${hack}/sync-finish.sh" app | grep -q waiting || fail "only the guard reported, so it must wait"
 state "{\"checks\": [${guard}, {\"name\": \"pr / pr\", \"status\": \"in_progress\", \"conclusion\": null}]}"
