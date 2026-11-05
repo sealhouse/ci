@@ -66,10 +66,10 @@ flowchart LR
 
 | Workflow | Trigger | Acts as |
 |---|---|---|
-| `sealhouse-sync` | 06:17 starts syncs; a sync PR's lane, and hourly, finish green ones | sealhouse-sync |
+| `sealhouse-sync` | 06:17 starts syncs; a sync PR's lane, and every six hours, finish green ones | sealhouse-sync |
 | `sealhouse-repin` | push to `main` | sealhouse-bot |
 | `sealhouse-bump` | a fork's merge lane | sealhouse-bot |
-| `sealhouse-bump-update` | a ci-pin or replaces PR's lane; a sync fast-forward; the operator's merge lane; hourly | sealhouse-bot |
+| `sealhouse-bump-update` | a ci-pin or replaces PR's lane; a sync fast-forward; the operator's merge lane; every six hours | sealhouse-bot |
 | `sealhouse-catalog` | the operator's merge lane | sealhouse-bot |
 | `sealhouse-replaces` | 07:23; `replaces.lock` push; dispatch | sealhouse-sync tags, sealhouse-bot opens PRs |
 | `sealhouse-nightly` | 08:40 | the job token |
