@@ -37,3 +37,5 @@ jobs:
         run: '"${CI_DIR}/test/test-github.sh"'
       - name: Tools
         run: '"${CI_DIR}/test/test-tools.sh"'
+      - name: Repin paths
+        run: '"${CI_DIR}/test/test-repin-paths.sh"'
