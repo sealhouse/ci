@@ -15,7 +15,8 @@ source "${repo}/.sealhouse/build.env"
 
 "${root}/hack/verify-base-images.sh" >&2
 
-version="$(git -C "${repo}" describe --tags --always --dirty)"
+# A rebuild passes the version its image recorded: describe moves as the sync brings in tags.
+version="${BUILD_VERSION:-$(git -C "${repo}" describe --tags --always --dirty)}"
 commit="$(git -C "${repo}" rev-parse HEAD)"
 epoch="$(git -C "${repo}" log -1 --format=%ct HEAD)"
 ldflags=""
