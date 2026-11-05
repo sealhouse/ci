@@ -2,6 +2,7 @@
 
 gh_api_url="${GITHUB_API_URL:-https://api.github.com}"
 gh_org="${SEALHOUSE_ORG:-sealhouse}"
+gh_review_team="${SEALHOUSE_REVIEW_TEAM:-maintainers}"
 
 b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
 
@@ -65,6 +66,12 @@ gh_disable_foreign_workflows() {
       gh_api PUT "/repos/${repo}/actions/workflows/${id}/disable" >/dev/null
       echo "${repo#*/}: disabled ${path}"
     done
+}
+
+# gh_request_review REPO NUMBER asks the review team for a review, and only warns if GitHub refuses.
+gh_request_review() {
+  jq -n --arg t "${gh_review_team}" '{team_reviewers: [$t]}' | gh_api POST "/repos/$1/pulls/$2/requested_reviewers" - >/dev/null ||
+    echo "::warning::could not request a review from ${gh_org}/${gh_review_team} on $1#$2" >&2
 }
 
 # gh_graphql QUERY ID runs a mutation on one node id.

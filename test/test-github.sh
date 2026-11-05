@@ -66,7 +66,7 @@ state "$(jq -n --arg f "${file}" '{files: {($f): "# Pins.\nTSA_IMAGE=old\nOTHER_
           {number: 8, node_id: "PR_keep", head: {ref: "bump/2.0-fulcio-image-aaaaaaaaaaaa", sha: "e"}}]}')"
 reset_log
 "${hack}/bump-pr.sh" timestamp-authority "${commit}" "${image}" rhtas/main >/dev/null
-calls POST access_tokens | jq -e '.body == {permissions: {contents: "write", pull_requests: "write"}, repositories: ["secure-sign-pqc-operator"]}' >/dev/null || fail "bot token scope"
+calls POST access_tokens | jq -e '.body == {permissions: {contents: "write", pull_requests: "write", members: "read"}, repositories: ["secure-sign-pqc-operator"]}' >/dev/null || fail "bot token scope"
 calls POST /git/blobs | jq -r .body.content | grep -qx "TSA_IMAGE=${image}" || fail "the blob does not pin the image"
 calls POST /git/blobs | jq -r .body.content | grep -qx 'OTHER_IMAGE=keep' || fail "the blob lost a pin"
 calls POST /git/commits | jq -e --arg s "Bump the 2.0 tsa image to timestamp-authority rhtas/main ${commit:0:12}" \
@@ -77,7 +77,16 @@ calls PATCH 'pulls/9$' | jq -e '.body.state == "closed"' >/dev/null || fail "sta
 calls DELETE 'bump/2.0-tsa-image-aaaaaaaaaaaa$' | grep -q . || fail "stale branch left"
 [ -z "$(calls PATCH 'pulls/8$')" ] || fail "closed another image's PR"
 calls POST /graphql | jq -e '.body.variables.id == "PR_new" and (.body.query | test("mergeMethod: SQUASH"))' >/dev/null || fail "auto-merge"
-ok "bump-pr opens one PR, closes the stale one and asks for auto-merge"
+calls POST 'operator/pulls/[0-9]+/requested_reviewers$' | jq -e '.body == {team_reviewers: ["maintainers"]}' >/dev/null || fail "bump-pr review request"
+ok "bump-pr opens one PR, asks the maintainers for a review, closes the stale one and asks for auto-merge"
+
+state "$(jq -n --arg f "${file}" '{files: {($f): "TSA_IMAGE=old\n"}, pulls: [], reviews_refused: true}')"
+reset_log
+"${hack}/bump-pr.sh" timestamp-authority "${commit}" "${image}" rhtas/main >"${t}/out" 2>&1 || fail "a refused review request stopped bump-pr"
+grep -q '::warning::could not request a review from sealhouse/maintainers' "${t}/out" || fail "no warning for a refused review request"
+calls POST /graphql | grep -q . || fail "a refused review request skipped auto-merge"
+state '{"reviews_refused": false}'
+ok "bump-pr warns and carries on when GitHub refuses the review request"
 
 state "$(jq -n --arg f "${file}" '{files: {($f): "TSA_IMAGE=old\n"}, pulls: [], graphql_error: true}')"
 expect_fail "${hack}/bump-pr.sh" timestamp-authority "${commit}" "${image}" rhtas/main
