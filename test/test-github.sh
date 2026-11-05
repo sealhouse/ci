@@ -256,9 +256,18 @@ ok "sync-fork mirrors upstream and its tags, keeps carry authors, and opens one 
 # sync-finish.
 sync_pr='{"number": 5, "node_id": "PR_sync", "head": {"ref": "rhtas/sync", "sha": "feed"}}'
 guard='{"name": "sync-merge-guard / sync-merge-guard", "status": "completed", "conclusion": "failure"}'
+workflows='[{"id": 1, "path": ".github/workflows/sealhouse-pr.yaml", "state": "active"},
+  {"id": 2, "path": ".github/workflows/ci.yml", "state": "active"},
+  {"id": 3, "path": ".github/workflows/release.yml", "state": "disabled_manually"},
+  {"id": 4, "path": "dynamic/dependabot/dependabot-updates", "state": "active"}]'
 reset_log
-state '{"pulls": []}'
-"${hack}/sync-finish.sh" app | grep -q 'no sync PR' || fail "no PR"
+state "{\"pulls\": [], \"workflows\": ${workflows}}"
+"${hack}/sync-finish.sh" app >"${t}/out"
+grep -q 'no sync PR' "${t}/out" || fail "no PR"
+grep -q 'disabled .github/workflows/ci.yml' "${t}/out" || fail "reports the disabled workflow"
+[ "$(calls PUT '/actions/workflows/[0-9]+/disable$' | jq -r .path)" = /repos/sealhouse/app/actions/workflows/2/disable ] ||
+  fail "disables only the active upstream workflow, even with no sync PR"
+state '{"workflows": []}'
 state "{\"pulls\": [${sync_pr}], \"checks\": [${guard}]}"
 "${hack}/sync-finish.sh" app | grep -q waiting || fail "only the guard reported, so it must wait"
 state "{\"checks\": [${guard}, {\"name\": \"pr / pr\", \"status\": \"in_progress\", \"conclusion\": null}]}"

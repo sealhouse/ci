@@ -75,6 +75,8 @@ class H(BaseHTTPRequestHandler):
             return self.reply(200, {"behind_by": state.get("behind", {}).get(rest.split("...")[1], 0)})
         if method == "GET" and rest.endswith("/check-runs"):
             return self.reply(200, {"check_runs": state.get("checks_by_sha", {}).get(rest.split("/")[2], state["checks"])})
+        if method == "GET" and rest == "/actions/workflows":
+            return self.reply(200, {"workflows": state.get("workflows", [])})
         return self.reply(200, {})
 
     def do_GET(self):

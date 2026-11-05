@@ -8,8 +8,11 @@ source "${root}/hack/github.sh"
 
 fork="$1"
 repo="${gh_org}/${fork}"
-GH_TOKEN="$(gh_app_token "${SYNC_APP_ID:?}" "${SYNC_APP_KEY:?}" '{"contents":"write","pull_requests":"write","checks":"read","workflows":"write"}' "${fork}")"
+GH_TOKEN="$(gh_app_token "${SYNC_APP_ID:?}" "${SYNC_APP_KEY:?}" '{"contents":"write","pull_requests":"write","checks":"read","workflows":"write","actions":"write"}' "${fork}")"
 export GH_TOKEN
+
+# A sync can bring in upstream workflows, which GitHub registers as active.
+gh_disable_foreign_workflows "${repo}"
 
 pr="$(gh_api GET "/repos/${repo}/pulls?state=open&base=rhtas/main&head=${gh_org}:rhtas/sync" | jq '.[0] // empty')"
 [ -n "${pr}" ] || { echo "${fork}: no sync PR"; exit 0; }

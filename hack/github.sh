@@ -56,6 +56,17 @@ gh_file() {
   rm -f "${out}"
 }
 
+# gh_disable_foreign_workflows REPO disables every active workflow but sealhouse-*.yaml and GitHub's dynamic ones.
+gh_disable_foreign_workflows() {
+  local repo="$1" id path
+  gh_api GET "/repos/${repo}/actions/workflows?per_page=100" |
+    jq -r '.workflows[] | select(.state == "active" and (.path | test("^\\.github/workflows/sealhouse-|^dynamic/") | not)) | "\(.id) \(.path)"' |
+    while read -r id path; do
+      gh_api PUT "/repos/${repo}/actions/workflows/${id}/disable" >/dev/null
+      echo "${repo#*/}: disabled ${path}"
+    done
+}
+
 # gh_graphql QUERY ID runs a mutation on one node id.
 gh_graphql() {
   local out
