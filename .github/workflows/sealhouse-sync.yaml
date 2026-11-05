@@ -1,4 +1,4 @@
-# Mirrors upstream into each fork, opens sync PRs, and fast-forwards the green ones.
+# Mirrors upstream into each fork, opens sync PRs, and fast-forwards the green ones; a sync PR's lane asks for the finish.
 name: sealhouse-sync
 
 on:
@@ -6,6 +6,11 @@ on:
     - cron: '17 6 * * *'
     - cron: '41 * * * *'
   workflow_dispatch:
+    inputs:
+      finish:
+        description: only fast-forward green sync PRs
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -14,6 +19,8 @@ concurrency: sealhouse-sync
 jobs:
   sync:
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
     timeout-minutes: 60
     env:
       SYNC_APP_ID: ${{ secrets.SEALHOUSE_SYNC_APP_ID }}
@@ -26,13 +33,23 @@ jobs:
           ci/hack/install-go.sh
       - name: Finish green syncs
         run: |
+          set -o pipefail
           failed=0
           while read -r fork _; do
-            ci/hack/sync-finish.sh "${fork}" || failed=1
+            ci/hack/sync-finish.sh "${fork}" | tee -a "${RUNNER_TEMP}/finished" || failed=1
           done < <(grep -v '^#' ci/forks.lock)
           exit "${failed}"
+      # Pins wait for an open sync PR, so a fast-forward frees them.
+      - name: Hand off
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if grep -q ': rhtas/main is ' "${RUNNER_TEMP}/finished" 2>/dev/null; then
+            gh workflow run sealhouse-bump-update.yaml -R "${GITHUB_REPOSITORY}"
+          fi
       - name: Start syncs
-        if: github.event.schedule != '41 * * * *'
+        if: github.event.schedule != '41 * * * *' && !inputs.finish
         run: |
           failed=0
           while read -r fork upstream branch; do

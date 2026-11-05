@@ -18,9 +18,9 @@ pr="$(gh_api GET "/repos/${repo}/pulls?state=open&base=rhtas/main&head=${gh_org}
 [ -n "${pr}" ] || { echo "${fork}: no sync PR"; exit 0; }
 head="$(jq -r .head.sha <<<"${pr}")"
 number="$(jq -r .number <<<"${pr}")"
-# The guard fails on a sync PR by design.
+# The guard fails on a sync PR by design, and the hand-off is what asked for this run.
 checks="$(gh_api GET "/repos/${repo}/commits/${head}/check-runs?per_page=100" |
-  jq '[.check_runs[] | select(.name | contains("sync-merge-guard") | not)]')"
+  jq '[.check_runs[] | select(.name | test("sync-merge-guard|hand-off") | not)]')"
 if [ "$(jq length <<<"${checks}")" -eq 0 ] || [ "$(jq '[.[] | select(.status != "completed")] | length' <<<"${checks}")" -gt 0 ]; then
   echo "${fork}: PR ${number} is waiting for its checks"
   exit 0

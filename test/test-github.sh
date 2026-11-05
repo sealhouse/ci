@@ -115,7 +115,10 @@ update_with "{\"sha1\": ${running}, \"sha2\": ${green}}" '{"bump/2.0-b-image-bbb
 grep -q 'PR 1 .*waiting' "${t}/out" || fail "running checks must wait"
 update_with "{\"sha2\": ${green}}" "${behind}"
 [ -z "$(calls PUT update-branch)" ] || fail "updated a PR before another's checks started"
-ok "bump-update waits for a PR whose checks are not finished"
+handoff_green='[{"name": "pr / pr", "status": "completed", "conclusion": "success"}, {"name": "pr / hand-off", "status": "in_progress", "conclusion": null}]'
+update_with "{\"sha1\": ${handoff_green}, \"sha2\": ${green}}" "${behind}"
+calls PUT 'pulls/1/update-branch$' | grep -q . || fail "a running hand-off held bump-update"
+ok "bump-update waits for a PR whose checks are not finished, but not for the hand-off"
 
 update_with "{\"sha1\": ${red}, \"sha2\": ${green}}" "${behind}"
 calls PUT 'pulls/2/update-branch$' | jq -e '.body.expected_head_sha == "sha2"' >/dev/null || fail "a failed PR blocked the next"
@@ -195,7 +198,11 @@ grep -q 'waiting for the sync PR' "${t}/out" || fail "the sync wait not reported
 merge_with "[$(botpr 4 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]')]" \
   "$(jq -nc --argjson c "$(signed "${pin_msg}")" --argjson f "[${good_pin}]" '{pr_commits: {"4": $c}, pr_files: {"4": $f}, merge_refused: ["4"]}')"
 grep -q 'PR 4 .*could not merge yet' "${t}/out" || fail "a refused merge must wait, not fail"
-ok "bot-merge waits for an open sync PR and for a merge GitHub refuses"
+merge_with "[$(botpr 4 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]')]" \
+  "$(jq -nc --argjson c "$(signed "${pin_msg}")" --argjson f "[${good_pin}]" --argjson g "${green}" \
+    '{pr_commits: {"4": $c}, pr_files: {"4": $f}, checks: ($g + [{name: "pr / hand-off", status: "in_progress", conclusion: null}])}')"
+calls PUT 'pulls/4/merge$' | grep -q . || fail "the hand-off that asked for the run held the merge"
+ok "bot-merge waits for an open sync PR and for a merge GitHub refuses, but not for the hand-off"
 
 # repin
 pin="$(printf 'f%.0s' {1..40})"
@@ -345,12 +352,13 @@ state "{\"checks\": [${guard}, {\"name\": \"pr / pr\", \"status\": \"in_progress
 state "{\"checks\": [${guard}, {\"name\": \"pr / pr\", \"status\": \"completed\", \"conclusion\": \"failure\"}]}"
 expect_fail "${hack}/sync-finish.sh" app
 [ -z "$(calls PATCH refs/heads/rhtas/main)" ] || fail "fast-forwarded a red sync"
-state "{\"checks\": [${guard}, {\"name\": \"pr / pr\", \"status\": \"completed\", \"conclusion\": \"success\"}]}"
+handoff='{"name": "sealhouse-pr / pr / hand-off", "status": "in_progress", "conclusion": null}'
+state "{\"checks\": [${guard}, ${handoff}, {\"name\": \"pr / pr\", \"status\": \"completed\", \"conclusion\": \"success\"}]}"
 "${hack}/sync-finish.sh" app >/dev/null
 calls POST /graphql | jq -e '.body.variables.id == "PR_sync" and (.body.query | test("markPullRequestReadyForReview"))' >/dev/null || fail "ready for review"
 calls PATCH 'refs/heads/rhtas/main$' | jq -e '.body == {sha: "feed", force: false}' >/dev/null || fail "fast-forward"
 calls DELETE 'refs/heads/rhtas/sync$' | grep -q . || fail "branch delete"
-ok "sync-finish waits, stops on red, ignores the guard, and fast-forwards a green sync"
+ok "sync-finish waits, stops on red, ignores the guard and the hand-off, and fast-forwards a green sync"
 # soak-record.
 state '{"missing_refs": ["heads/soak-trend"]}'
 reset_log

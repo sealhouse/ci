@@ -1,4 +1,4 @@
-# Merges green ci-pin and replaces PRs, then updates the next bump PR, after an operator merge and hourly in case a request was lost.
+# Merges green ci-pin and replaces PRs, then updates the next bump PR: when their PR lanes pass, after an operator merge, and hourly in case a request was lost.
 name: sealhouse-bump-update
 
 on:

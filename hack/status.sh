@@ -15,7 +15,7 @@ gh api graphql -f q="org:${org} is:pr is:open" -f query='
   --jq '[.data.search.nodes[] | {repo: .repository.name, number, title, url, draft: .isDraft, created: .createdAt,
     review: (.reviewDecision // "NONE"), ref: .headRefName, author: .author.login,
     checks: ([.commits.nodes[0].commit.statusCheckRollup.contexts.nodes // [] | .[]
-      | select(.name | contains("sync-merge-guard") | not)] as $c   # it fails on a sync PR by design
+      | select(.name | test("sync-merge-guard|hand-off") | not)] as $c   # the guard fails on a sync PR by design
       | if ($c | length) == 0 then "NONE"
         elif any($c[]; (.status // "COMPLETED") != "COMPLETED" or .state == "PENDING") then "PENDING"
         elif any($c[]; (.conclusion // .state) | IN("SUCCESS", "SKIPPED", "NEUTRAL") | not) then "FAILURE"
