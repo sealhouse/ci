@@ -10,7 +10,24 @@ on:
       - forks.lock
       - replaces.lock
       - README.md
+      # Run only by ci's own workflows; test/test-repin-paths.sh keeps the callers off them.
+      - hack/bot-merge.sh
+      - hack/bump-pr.sh
+      - hack/bump-update.sh
+      - hack/e2e-alpha.sh
+      - hack/microshift-up.sh
+      - hack/rebuild-check.sh
+      - hack/record-catalog.sh
+      - hack/release-library.sh
+      - hack/repin.sh
+      - hack/replace-consumers.sh
+      - hack/replace-lib.sh
+      - hack/soak-record.sh
+      - hack/soak.sh
       - hack/status.sh
+      - hack/sync-finish.sh
+      - hack/sync-fork.sh
+      - hack/watch-microshift.sh
   workflow_dispatch:
 
 permissions: {}

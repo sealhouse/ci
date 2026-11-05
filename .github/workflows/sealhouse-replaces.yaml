@@ -40,8 +40,6 @@ jobs:
           git clone -q "https://github.com/${GITHUB_REPOSITORY}.git" ci
           git -C ci checkout -q --detach "${GITHUB_SHA}"
           ci/hack/install-go.sh
-      - name: Toolchain
-        run: ci/hack/tools.sh
       - name: Release
         if: github.event_name == 'workflow_dispatch'
         env:

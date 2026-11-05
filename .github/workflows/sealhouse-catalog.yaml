@@ -23,7 +23,7 @@ jobs:
           git -C ci checkout -q --detach "${GITHUB_SHA}"
           ci/hack/install-go.sh
       - name: Toolchain
-        run: ci/hack/tools.sh
+        run: ci/hack/tools.sh crane
       - name: Record
         env:
           BOT_APP_ID: ${{ secrets.SEALHOUSE_BOT_APP_ID }}

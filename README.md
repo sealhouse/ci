@@ -5,6 +5,7 @@ Reusable workflows and scripts for the sealhouse lanes: the forks of the sigstor
 ## How the workflows connect
 
 Rounded boxes are PRs and red hexagons are where a maintainer approves. Every other step runs by itself once its checks pass.
+A merge that changes nothing an image is built from, such as a ci pin or a carried workflow, pushes no image and opens no bump.
 
 ### Upstream to the alpha channel
 

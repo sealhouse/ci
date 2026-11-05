@@ -93,6 +93,12 @@ jobs:
         if: inputs.image
         run: |
           set -euo pipefail
+          # A change to .github/ alone, a ci pin or a carried workflow, builds the image an ancestor pushed.
+          last="$("${CI_DIR}/hack/last-image.sh" . HEAD "${BRANCH}")"
+          if [ -n "${last}" ] && "${CI_DIR}/hack/same-image.sh" . "${last%% *}" HEAD; then
+            echo "${last%% *} already pushed this image, ${last#* }; nothing to build or bump"
+            exit 0
+          fi
           tag="${BRANCH//\//-}-$(git rev-parse --short=12 HEAD)"
           built="$("${CI_DIR}/hack/build-image.sh" . "${tag}" | tail -1)"
           image="${REGISTRY_HOST:-localhost:5001}/sealhouse/${built}"
@@ -119,6 +125,14 @@ jobs:
               git -C "${CATALOG_REPO}" pull -q --ff-only
             done
           fi
+          # As for images: the alpha already carries a commit that publishes the same thing.
+          published="$(sed -n 's/^OPERATOR_COMMIT=//p' "${CATALOG_REPO:?}/alpha/head.env" 2>/dev/null || true)"
+          if [ -n "${published}" ] && git merge-base --is-ancestor "${published}" HEAD 2>/dev/null &&
+            "${CI_DIR}/hack/same-image.sh" . "${published}" HEAD; then
+            echo "the alpha's ${published:0:12} already publishes this; nothing to publish"
+            echo "PUBLISH_SKIPPED=1" >>"${GITHUB_ENV}"
+            exit 0
+          fi
           "${CI_DIR}/hack/cluster-up.sh"
           make "${{ inputs.publish }}"
 
@@ -136,7 +150,9 @@ jobs:
             "${CI_DIR}/hack/request-lane.sh" sealhouse-bump.yaml "fork=${GITHUB_REPOSITORY#*/}" "commit=${SHA}" "image=${IMAGE}" "branch=${BRANCH}"
           fi
           if [ -f "${CATALOG_REPO:-}/alpha/head.env" ]; then
-            "${CI_DIR}/hack/request-lane.sh" sealhouse-catalog.yaml "head-env=$(base64 -w0 "${CATALOG_REPO}/alpha/head.env")"
+            if [ -z "${PUBLISH_SKIPPED:-}" ]; then
+              "${CI_DIR}/hack/request-lane.sh" sealhouse-catalog.yaml "head-env=$(base64 -w0 "${CATALOG_REPO}/alpha/head.env")"
+            fi
             "${CI_DIR}/hack/request-lane.sh" sealhouse-bump-update.yaml
           fi
 

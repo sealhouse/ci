@@ -7,17 +7,23 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 source "${root}/hack/lib.sh"
 
 tree="$(cd "$1" && pwd)" published="$2"
-sha="$(git -C "${tree}" rev-parse HEAD)"
-tag="rhtas-main-${sha:0:12}"
 name="$(basename "${tree}")"
+# A merge that changes nothing an image is built from pushes none, so check the commit that pushed the one in use.
+last="$(REGISTRY_HOST="${published}" "${root}/hack/last-image.sh" "${tree}" HEAD rhtas/main)"
+if [ -z "${last}" ]; then
+  echo "${name}: no image in ${published} for the last 50 commits of rhtas/main; skipped"
+  exit 0
+fi
+sha="${last%% *}" pushed="${last#* }"
+if [ "${sha}" != "$(git -C "${tree}" rev-parse HEAD)" ]; then
+  echo "${name}: rhtas/main $(git -C "${tree}" rev-parse --short=12 HEAD) builds the image ${sha:0:12} pushed; rebuilding ${sha:0:12}"
+  git -C "${tree}" checkout -q --detach "${sha}"
+fi
+tag="rhtas-main-${sha:0:12}"
 ci_wt="$(ci_worktree "$(ci_pin "${tree}/.github/workflows/sealhouse-merge.yaml" merge.yaml)")"
 image="$(sed -n 's/^IMAGE=//p' "${tree}/.sealhouse/build.env")"
 crane_args=()
 case "${published}" in localhost:*) crane_args=(--insecure) ;; esac
-if ! pushed="$(crane digest "${crane_args[@]}" "${published}/sealhouse/${image}:${tag}" 2>/dev/null)"; then
-  echo "${name}: no ${image}:${tag} in ${published} (its merge lane pushed none); skipped"
-  exit 0
-fi
 # The merge lane's describe, which tags the sync has pushed since would change. It must still describe HEAD.
 version="$(crane config "${crane_args[@]}" "${published}/sealhouse/${image}@${pushed}" | jq -r '.config.Labels["org.opencontainers.image.version"] // ""')"
 describes_head() {
