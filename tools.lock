@@ -1,6 +1,9 @@
 GO=1.27.3 65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40
 KIND=sigs.k8s.io/kind@v0.33.0
+KIND_BIN=https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64 aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
 COSIGN=github.com/sigstore/cosign/v3/cmd/cosign@v3.1.4
+COSIGN_BIN=https://github.com/sigstore/cosign/releases/download/v3.1.4/cosign-linux-amd64 424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa
 CRANE=github.com/google/go-containerregistry/cmd/crane@v0.22.1
+CRANE_BIN=https://github.com/google/go-containerregistry/releases/download/v0.22.1/go-containerregistry_Linux_x86_64.tar.gz 0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0
 GOVULNCHECK=golang.org/x/vuln/cmd/govulncheck@v1.9.0
 ACTIONLINT=github.com/rhysd/actionlint/cmd/actionlint@v1.7.12

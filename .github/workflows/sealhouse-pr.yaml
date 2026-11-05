@@ -35,3 +35,5 @@ jobs:
         run: '"${CI_DIR}/test/test-replaces.sh"'
       - name: GitHub scripts
         run: '"${CI_DIR}/test/test-github.sh"'
+      - name: Tools
+        run: '"${CI_DIR}/test/test-tools.sh"'
