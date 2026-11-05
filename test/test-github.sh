@@ -136,6 +136,67 @@ calls PUT 'pulls/4/update-branch$' | grep -q . || fail "ci-pin PR not updated"
 calls POST access_tokens | jq -e '.body.permissions.workflows == "write"' >/dev/null || fail "main can carry workflow changes"
 ok "bump-update also takes ci-pin PRs"
 
+# bot-merge.
+p40="$(printf 'd%.0s' {1..40})" o40="$(printf 'e%.0s' {1..40})" x40="$(printf 'f%.0s' {1..40})"
+botpr() { printf '{"number": %s, "node_id": "x", "user": {"login": "%s"}, "head": {"ref": "%s", "sha": "%s"}}' "$1" "$3" "$2" "sha$1"; }
+signed() { jq -nc --arg m "$1" --arg a "${2:-sealhouse-bot[bot]}" --argjson v "${3:-true}" '[{author: {login: $a}, committer: {login: "web-flow"}, commit: {message: $m, verification: {verified: $v}}}]'; }
+pinfile() { # FILE OLD NEW [EXTRA_LINE]
+  jq -nc --arg f "$1" --arg o "$2" --arg n "$3" --arg x "${4:-}" '{filename: $f, status: "modified",
+    patch: ("@@ -1,4 +1,4 @@\n jobs:\n-    uses: sealhouse/ci/.github/workflows/pr.yaml@\($o)\n+    uses: sealhouse/ci/.github/workflows/pr.yaml@\($n)\n     with:\n-      ci-ref: \($o)\n+      ci-ref: \($n)" + (if $x == "" then "" else "\n+" + $x end))}'
+}
+pin_msg="UPSTREAM: <drop>: Pin ci ${p40:0:12}
+
+Ci-Pin: ${p40}"
+merge_with() { # PULLS EXTRA_STATE
+  state "$(jq -nc --argjson p "$1" --argjson g "${green}" --argjson x "${2:-{\}}" '{pulls: $p, checks: $g, checks_by_sha: {}, compare_status: {}, merge_refused: [], pr_commits: {}, pr_files: {}} + $x')"
+  reset_log
+  "${hack}/bot-merge.sh" app rhtas/main >"${t}/out"
+}
+good_pin="$(pinfile .github/workflows/sealhouse-pr.yaml "${o40}" "${p40}")"
+good_rep='[{"filename": "go.mod", "status": "modified"}, {"filename": "tools/go.sum", "status": "modified"}]'
+merge_with "[$(botpr 4 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]'), $(botpr 6 replaces/abc 'sealhouse-bot[bot]'), $(botpr 7 bump/2.0-tsa-image-abc 'sealhouse-bot[bot]'), $(botpr 8 ci-pin/xyz someone)]" \
+  "$(jq -nc --argjson pc "$(signed "${pin_msg}")" --argjson rc "$(signed $'UPSTREAM: <drop>: Replace modules\n\nGo-Replaces: replaces.lock')" \
+    --argjson pf "[${good_pin}]" --argjson rf "${good_rep}" '{pr_commits: {"4": $pc, "6": $rc}, pr_files: {"4": $pf, "6": $rf}}')"
+calls POST access_tokens | jq -e '.body == {permissions: {contents: "write", pull_requests: "write", checks: "read", workflows: "write"}, repositories: ["app", "ci"]}' >/dev/null || fail "bot-merge token scope"
+calls PUT 'pulls/4/merge$' | jq -e --arg p "${p40}" '.body == {merge_method: "squash", sha: "sha4", commit_title: "UPSTREAM: <drop>: Pin ci \($p[0:12])", commit_message: "Ci-Pin: \($p)"}' >/dev/null || fail "ci-pin merge keeps its trailer"
+calls GET "ci/compare/${p40}...main" | grep -q . || fail "the pin was not checked against ci main"
+calls PUT 'pulls/6/merge$' | jq -e '.body.commit_message == "Go-Replaces: replaces.lock"' >/dev/null || fail "replaces merge keeps its trailer"
+[ -z "$(calls PUT 'pulls/(7|8)/merge$')" ] || fail "merged a bump or someone else's PR"
+grep -q 'PR 8 (ci-pin/xyz) is not from' "${t}/out" || fail "someone else's PR not reported"
+ok "bot-merge squashes green ci-pin and replaces PRs from the bot, keeping their trailers, and leaves bumps alone"
+
+refused() { # NAME PR_COMMITS PR_FILES [EXTRA_STATE]
+  merge_with "[$(botpr 4 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]')]" \
+    "$(jq -nc --argjson c "$2" --argjson f "$3" --argjson x "${4:-{\}}" '{pr_commits: {"4": $c}, pr_files: {"4": $f}} + $x')"
+  [ -z "$(calls PUT 'pulls/4/merge$')" ] || fail "merged $1"
+}
+refused "a commit someone else wrote" "$(signed "${pin_msg}" someone)" "[${good_pin}]"
+grep -q 'did not sign' "${t}/out" || fail "a foreign commit not reported"
+refused "an unverified commit" "$(signed "${pin_msg}" 'sealhouse-bot[bot]' false)" "[${good_pin}]"
+refused "an extra line in a caller" "$(signed "${pin_msg}")" "[$(pinfile .github/workflows/sealhouse-pr.yaml "${o40}" "${p40}" '    run: curl evil')]"
+grep -q 'changes more than the pin' "${t}/out" || fail "an extra line not reported"
+refused "another workflow" "$(signed "${pin_msg}")" "[${good_pin}, $(pinfile .github/workflows/release.yaml "${o40}" "${p40}")]"
+refused "a pin the branch does not name" "$(signed "${pin_msg}")" "[$(pinfile .github/workflows/sealhouse-pr.yaml "${o40}" "${x40}")]"
+refused "a pin off ci main" "$(signed "${pin_msg}")" "[${good_pin}]" "{\"compare_status\": {\"${p40}...main\": \"diverged\"}}"
+calls GET "ci/compare/${p40}...main" | grep -q . || fail "a pin off ci main was refused before the compare"
+refused "a red PR" "$(signed "${pin_msg}")" "[${good_pin}]" "{\"checks\": ${red}}"
+grep -q 'PR 4 .*needs a maintainer: pr / pr' "${t}/out" || fail "a red PR not reported"
+refused "a PR still running its checks" "$(signed "${pin_msg}")" "[${good_pin}]" "{\"checks\": ${running}}"
+grep -q 'waiting for its checks' "${t}/out" || fail "running checks not reported"
+merge_with "[$(botpr 6 replaces/abc 'sealhouse-bot[bot]')]" \
+  "$(jq -nc --argjson c "$(signed x)" '{pr_commits: {"6": $c}, pr_files: {"6": [{filename: "main.go", status: "modified"}]}}')"
+[ -z "$(calls PUT 'pulls/6/merge$')" ] || fail "merged a replaces PR that changes code"
+ok "bot-merge refuses foreign or unsigned commits, changes beyond the pin or go.mod, pins off ci main, and unfinished checks"
+
+merge_with "[$(botpr 4 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]'), {\"number\": 9, \"user\": {\"login\": \"sealhouse-sync[bot]\"}, \"head\": {\"ref\": \"rhtas/sync\", \"sha\": \"s\"}}]" \
+  "$(jq -nc --argjson c "$(signed "${pin_msg}")" --argjson f "[${good_pin}]" '{pr_commits: {"4": $c}, pr_files: {"4": $f}}')"
+[ -z "$(calls PUT merge)" ] || fail "merged under an open sync PR"
+grep -q 'waiting for the sync PR' "${t}/out" || fail "the sync wait not reported"
+merge_with "[$(botpr 4 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]')]" \
+  "$(jq -nc --argjson c "$(signed "${pin_msg}")" --argjson f "[${good_pin}]" '{pr_commits: {"4": $c}, pr_files: {"4": $f}, merge_refused: ["4"]}')"
+grep -q 'PR 4 .*could not merge yet' "${t}/out" || fail "a refused merge must wait, not fail"
+ok "bot-merge waits for an open sync PR and for a merge GitHub refuses"
+
 # repin
 pin="$(printf 'f%.0s' {1..40})"
 old="$(printf 'e%.0s' {1..40})"
