@@ -9,6 +9,8 @@ trap 'chmod -R u+w "${t}"; rm -rf "${t}"' EXIT
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.com
 export GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
+# semver's dependency, which the scratch proxy does not serve.
+GOMODCACHE="${t}/modcache" go -C "${ci_root}/tools/semver" mod download
 export GOPROXY="file://${t}/proxy" GONOPROXY=none GOSUMDB=off GOFLAGS= GOWORK=off
 export GOMODCACHE="${t}/modcache" GOTOOLCHAIN=local
 gover="$(go env GOVERSION | sed -E 's/^go([0-9]+\.[0-9]+).*/\1/')"
@@ -88,6 +90,24 @@ check || fail "check failed after apply: $(cat "${t}/check.err")"
 [ "$(replace_of example.com/lib)" = github.com/sealhouse/lib@v1.0.1-rhtas.2 ] || fail "lib replaced by '$(replace_of example.com/lib)'"
 committed "lib rhtas.2"
 echo "ok: an inventory moved to a newer release fails the check until applied"
+
+# 2b. Upstream moves the consumer to a lib newer than the fork release: the replace would downgrade it.
+publish example.com/lib v1.1.0 example.com/lib
+go mod edit -require=example.com/lib@v1.1.0 "${app}/go.mod"
+go -C "${app}" mod tidy 2>/dev/null
+"${ci_root}/hack/apply-replaces.sh" "${app}" "${inv}" 2>"${t}/apply.err" >/dev/null &&
+  fail "apply replaced lib v1.1.0 with the older v1.0.1-rhtas.2"
+grep -q "^go.mod: example.com/lib v1.1.0 is newer than replaces.lock's github.com/sealhouse/lib v1.0.1-rhtas.2" "${t}/apply.err" ||
+  fail "unexpected apply error: $(cat "${t}/apply.err")"
+check && fail "check passed with lib replaced below the version the build selects"
+grep -q "^\./go.mod: example.com/lib v1.1.0 is newer than" "${t}/check.err" || fail "unexpected check error: $(cat "${t}/check.err")"
+publish github.com/sealhouse/lib v1.1.1-rhtas.1 example.com/lib
+echo 'example.com/lib github.com/sealhouse/lib v1.1.1-rhtas.1 GO-2026-0001 upstream>=v1.1.1' >"${inv}"
+apply || fail "apply failed with a fork release newer than the build needs"
+check || fail "check failed after apply: $(cat "${t}/check.err")"
+git -C "${app}" checkout -q -- .
+echo 'example.com/lib github.com/sealhouse/lib v1.0.1-rhtas.2 GO-2026-0001 upstream>=v1.0.1' >"${inv}"
+echo "ok: a fork release older than the version the build selects fails apply and check until the fork catches up"
 
 # 3. mid's fork release brings in extra, which the inventory also holds.
 {
