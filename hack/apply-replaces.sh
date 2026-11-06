@@ -60,4 +60,9 @@ while read -r gomod; do
   [ "${added}" -eq 0 ] || { echo "${gomod}: the build list did not settle after 8 rounds of replaces" >&2; exit 1; }
   # 3. Tidy what changed.
   [ "$(cat "${dir}/go.mod")" = "${before}" ] || go -C "${dir}" mod tidy
+  # 4. Never a fork release older than what the build needs.
+  if ! downgrades="$("${root}/hack/replace-downgrades.sh" "${dir}" "${inventory}")"; then
+    sed "s#^#${gomod}: #" <<<"${downgrades}" >&2
+    exit 1
+  fi
 done < <(git -C "${repo}" ls-files '*go.mod' 'go.mod' | grep -v '/testdata/' | sort -u)

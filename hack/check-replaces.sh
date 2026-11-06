@@ -47,6 +47,11 @@ while read -r gomod; do
       failed=1
     fi
   done <"${inventory}"
+  # 3. No fork release older than what the build needs.
+  if ! downgrades="$("${root}/hack/replace-downgrades.sh" "${dir}" "${inventory}")"; then
+    sed "s#^#${rel}/go.mod: #" <<<"${downgrades}" >&2
+    failed=1
+  fi
 done < <(git -C "${repo}" ls-files '*go.mod' 'go.mod' | grep -v '/testdata/' | sort -u)
 
 if [ "${failed}" -eq 0 ]; then
