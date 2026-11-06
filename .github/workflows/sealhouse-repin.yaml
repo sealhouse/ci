@@ -16,6 +16,7 @@ on:
       - hack/bump-update.sh
       - hack/e2e-alpha.sh
       - hack/microshift-up.sh
+      - hack/nightly-state.sh
       - hack/rebuild-check.sh
       - hack/record-catalog.sh
       - hack/release-library.sh

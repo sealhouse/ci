@@ -41,3 +41,5 @@ jobs:
         run: '"${CI_DIR}/test/test-repin-paths.sh"'
       - name: Same image
         run: '"${CI_DIR}/test/test-same-image.sh"'
+      - name: Nightly state
+        run: '"${CI_DIR}/test/test-nightly-state.sh"'

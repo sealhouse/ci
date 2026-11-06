@@ -1,4 +1,6 @@
 # The alpha head on every cluster, the soak, vulnerability scans and rebuilds.
+# The scans and the MicroShift watch run every night; the rest only when their inputs changed
+# since their last green run, or that run is a week old. A dispatch runs everything.
 name: sealhouse-nightly
 
 on:
@@ -11,6 +13,44 @@ permissions: {}
 concurrency: sealhouse-nightly
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      e2e: ${{ steps.plan.outputs.e2e }}
+      rebuild: ${{ steps.plan.outputs.rebuild }}
+      next: ${{ steps.plan.outputs.next }}
+    env:
+      FORKS: cosign fulcio rekor-tiles timestamp-authority
+    steps:
+      - name: Scripts
+        run: |
+          git clone -q "https://github.com/${GITHUB_REPOSITORY}.git" ci
+          git -C ci checkout -q --detach "${GITHUB_SHA}"
+          ci/hack/install-go.sh
+      - name: Toolchain
+        run: ci/hack/tools.sh crane
+      - name: Inputs
+        run: |
+          if git -C ci fetch -q origin nightly-state; then
+            git -C ci show FETCH_HEAD:nightly-state.env >state
+          else
+            : >state
+          fi
+          git clone -q --depth 1 https://github.com/sealhouse/pqc-catalog.git pqc-catalog
+          for fork in ${FORKS}; do
+            git clone -q --filter=blob:none -b rhtas/main "https://github.com/sealhouse/${fork}.git" "${fork}"
+            last="$(REGISTRY_HOST=ghcr.io ci/hack/last-image.sh "${fork}" HEAD rhtas/main)"
+            echo "${fork} ${last:-none none}" >>images
+          done
+      - name: Plan
+        id: plan
+        env:
+          FULL: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
+        run: |
+          ci/hack/nightly-state.sh plan ci state pqc-catalog/alpha/head.env images next 2> >(tee -a "${GITHUB_STEP_SUMMARY}" >&2) >>"${GITHUB_OUTPUT}"
+          echo "next=$(base64 -w0 next)" >>"${GITHUB_OUTPUT}"
+
   watch:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -26,6 +66,8 @@ jobs:
         run: ci/hack/watch-microshift.sh
 
   kind:
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -62,6 +104,8 @@ jobs:
           KUBECONFIG="${E2E_KUBECONFIG}" kubectl get events -A --sort-by=.lastTimestamp | tail -50
 
   microshift:
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
@@ -96,6 +140,8 @@ jobs:
           KUBECONFIG="${E2E_KUBECONFIG}" kubectl get events -A --sort-by=.lastTimestamp | tail -50
 
   soak:
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 200
     permissions:
@@ -153,12 +199,14 @@ jobs:
           exit "${failed}"
 
   rebuild:
+    needs: changes
+    if: needs.changes.outputs.rebuild != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        fork: [cosign, fulcio, rekor-tiles, timestamp-authority]
+        fork: ${{ fromJSON(needs.changes.outputs.rebuild) }}
     steps:
       - name: Scripts
         run: |
@@ -178,3 +226,38 @@ jobs:
         run: |
           git clone -q --filter=blob:none -b rhtas/main "https://github.com/sealhouse/${FORK}.git" "${FORK}"
           ci/hack/rebuild-check.sh "${PWD}/${FORK}" ghcr.io
+
+  # The jobs that passed become the baseline the next night compares against.
+  record:
+    needs: [changes, kind, microshift, soak, rebuild]
+    if: ${{ !cancelled() && needs.changes.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Scripts
+        run: |
+          git clone -q "https://github.com/${GITHUB_REPOSITORY}.git" ci
+          git -C ci checkout -q --detach "${GITHUB_SHA}"
+      - name: Record
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXT: ${{ needs.changes.outputs.next }}
+          E2E: ${{ needs.kind.result == 'success' && needs.microshift.result == 'success' && needs.soak.result == 'success' }}
+          REBUILD: ${{ needs.rebuild.result == 'success' && needs.changes.outputs.rebuild || '[]' }}
+        run: |
+          if git -C ci fetch -q origin nightly-state; then
+            git -C ci show FETCH_HEAD:nightly-state.env >state
+          else
+            : >state
+          fi
+          base64 -d <<<"${NEXT}" >next
+          keys=()
+          [ "${E2E}" != true ] || keys+=(e2e)
+          while read -r fork; do keys+=("rebuild/${fork}"); done < <(jq -r '.[]' <<<"${REBUILD}")
+          if [ "${#keys[@]}" -eq 0 ]; then
+            echo "nothing new passed"
+            exit 0
+          fi
+          ci/hack/nightly-state.sh record state next "${keys[@]}"
