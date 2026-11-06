@@ -129,7 +129,8 @@ jobs:
     needs: pr
     if: >-
       github.event_name == 'pull_request' && (github.event.pull_request.head.ref == 'rhtas/sync' ||
-      startsWith(github.event.pull_request.head.ref, 'ci-pin/') || startsWith(github.event.pull_request.head.ref, 'replaces/'))
+      startsWith(github.event.pull_request.head.ref, 'ci-pin/') || startsWith(github.event.pull_request.head.ref, 'replaces/') ||
+      startsWith(github.event.pull_request.head.ref, 'bump/'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -143,7 +144,7 @@ jobs:
           set -euo pipefail
           [ -z "${SEALHOUSE_CI:-}" ] || exit 0
           if [ -z "${DISPATCH_APP_ID}" ]; then
-            echo "::notice::the caller passes no dispatch App; the hourly runs pick this PR up"
+            echo "::notice::the caller passes no dispatch App; the six-hourly runs pick this PR up"
             exit 0
           fi
           git clone -q https://github.com/sealhouse/ci.git "${RUNNER_TEMP}/ci"
