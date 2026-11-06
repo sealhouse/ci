@@ -72,7 +72,7 @@ flowchart LR
 | `sealhouse-bump-update` | a ci-pin, replaces or bump PR's lane; a sync fast-forward; the operator's merge lane; every six hours | sealhouse-bot |
 | `sealhouse-catalog` | the operator's merge lane | sealhouse-bot |
 | `sealhouse-replaces` | 07:23; `replaces.lock` push; dispatch | sealhouse-sync tags, sealhouse-bot opens PRs |
-| `sealhouse-nightly` | 08:40 | the job token |
+| `sealhouse-nightly` | 08:40; the e2e, soak and rebuilds only when their inputs changed or weekly | the job token |
 | `pr.yaml`, `merge.yaml`, `sync-merge-guard.yaml` | called from each repo's `sealhouse-*.yaml`, pinned to one ci commit | the caller; lanes hand off through sealhouse-dispatch |
 
 `hack/status.sh` prints what waits on a maintainer, the active runs and the open PRs across the org.
