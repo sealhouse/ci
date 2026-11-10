@@ -21,7 +21,7 @@ jobs:
       rebuild: ${{ steps.plan.outputs.rebuild }}
       next: ${{ steps.plan.outputs.next }}
     env:
-      FORKS: cosign fulcio rekor-tiles timestamp-authority
+      FORKS: cosign dex fulcio rekor-tiles timestamp-authority
     steps:
       - name: Scripts
         run: |
