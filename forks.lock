@@ -1,6 +1,8 @@
 # <fork> <upstream url> <upstream branch>
 cosign https://github.com/sigstore/cosign.git main
+dex https://github.com/dexidp/dex.git master
 fulcio https://github.com/sigstore/fulcio.git main
+go-oidc https://github.com/coreos/go-oidc.git v3
 go-tuf https://github.com/theupdateframework/go-tuf.git master
 protobuf-specs https://github.com/sigstore/protobuf-specs.git main
 rekor-tiles https://github.com/sigstore/rekor-tiles.git main
