@@ -23,6 +23,10 @@ ldflags=""
 if [ -n "${LDFLAGS_PKG:-}" ]; then
   ldflags="-X ${LDFLAGS_PKG}.gitVersion=${version} -X ${LDFLAGS_PKG}.gitCommit=${commit} -X ${LDFLAGS_PKG}.gitTreeState=clean"
 fi
+# A binary that keeps its version in one string variable, such as dex's main.version.
+if [ -n "${VERSION_VAR:-}" ]; then
+  ldflags="${ldflags:+${ldflags} }-X ${VERSION_VAR}=${version}"
+fi
 
 ref="${registry}/sealhouse/${IMAGE}:${tag}"
 cache=()
