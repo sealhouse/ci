@@ -43,3 +43,12 @@ jobs:
         run: '"${CI_DIR}/test/test-same-image.sh"'
       - name: Nightly state
         run: '"${CI_DIR}/test/test-nightly-state.sh"'
+      - name: Report
+        run: 'REPORT_SITE_OUT="${RUNNER_TEMP}/report-site" "${CI_DIR}/test/test-report.sh"'
+      - name: Report page
+        run: |
+          if [ -n "${SEALHOUSE_CI:-}" ] && ! command -v google-chrome >/dev/null; then
+            echo "::notice::no google-chrome on this host; the report page check runs on GitHub"
+            exit 0
+          fi
+          "${CI_DIR}/test/report-site-check.sh" "${RUNNER_TEMP}/report-site"

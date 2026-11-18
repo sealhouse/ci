@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sealhouse delivery</title>
+<meta name="description" content="How upstream sigstore changes flow through the sealhouse forks into the alpha channel, day by day.">
+<link rel="stylesheet" href="style.css">
+<script src="vendor/chart.umd.min.js"></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Sealhouse delivery</h1>
+    <span id="fresh" class="status"></span>
+    <span id="asof" class="small"></span>
+    <div class="theme"><label class="small">Times in <select id="zone" title="Daily totals always cover a UTC day"></select></label> <button id="theme" type="button" aria-label="Switch colour theme">Theme: auto</button></div>
+  </header>
+  <p class="sub">How upstream changes reach the alpha channel, collected once a day from the sealhouse repositories.</p>
+  <div id="error" class="card"><h2>The report could not be shown</h2><p id="error-text" class="small"></p></div>
+
+  <nav class="tabs" role="tablist" aria-label="Report sections">
+    <a href="#overview" role="tab" data-tab="overview">Overview</a>
+    <a href="#delivery" role="tab" data-tab="delivery">Delivery</a>
+    <a href="#reliability" role="tab" data-tab="reliability">Reliability</a>
+    <a href="#forks" role="tab" data-tab="forks">Forks</a>
+    <a href="#day" role="tab" data-tab="day">Day report</a>
+  </nav>
+
+  <div class="tabpanel" id="tab-overview" role="tabpanel" aria-label="Overview" hidden>
+    <section class="hero" id="tiles"></section>
+    <section class="grid row">
+      <div class="card">
+        <h2>Needs attention</h2>
+        <ul class="attention" id="attention"></ul>
+      </div>
+      <div class="card">
+        <h2 id="latest-title">Latest day</h2>
+        <div id="latest"></div>
+      </div>
+    </section>
+    <section class="card">
+      <h2>Waiting on a person</h2>
+      <div id="waiting"></div>
+    </section>
+    <section class="card">
+      <h2>Report coverage</h2>
+      <p class="small">One square per day. A quiet day still gets a report, so a grey square means the report did not run.</p>
+      <div class="legend">
+        <span><b style="background:var(--good)"></b>Report, with activity</span>
+        <span><b style="background:var(--good);opacity:.45"></b>Report, quiet day</span>
+        <span><b style="background:var(--idle)"></b>No report</span>
+        <span><b style="background:var(--critical)"></b>Collection failed</span>
+      </div>
+      <div class="strip" id="coverage"></div>
+    </section>
+  </div>
+
+  <div class="tabpanel" id="tab-delivery" role="tabpanel" aria-label="Delivery" hidden>
+    <section class="card">
+      <h2>Upstream to alpha, per component</h2>
+      <p class="small">Hours from the newest upstream commit an alpha took in to that alpha's release, split by stage.</p>
+      <div class="legend" id="lead-legend"></div>
+      <div class="chart tall" id="lead"></div>
+      <details><summary>Table</summary><div class="scroll" id="lead-table"></div></details>
+    </section>
+    <section class="card">
+      <h2>Daily activity</h2>
+      <div class="grid panels">
+        <div class="panel"><h3>Upstream commits synced</h3><div class="chart short" id="upstream"></div></div>
+        <div class="panel"><h3>Images built</h3><div class="chart short" id="images"></div></div>
+        <div class="panel"><h3>Alphas published</h3><div class="chart short" id="alphas"></div></div>
+      </div>
+      <details><summary>Table</summary><div class="scroll" id="daily-table"></div></details>
+    </section>
+    <section class="card">
+      <h2>Who merged the changes</h2>
+      <p class="small">Merged pull requests per day: opened and merged by the bots with no approval needed, against those a person opened or approved.</p>
+      <div class="legend" id="hands-legend"></div>
+      <div class="chart" id="hands"></div>
+      <details><summary>Table</summary><div class="scroll" id="hands-table"></div></details>
+    </section>
+  </div>
+
+  <div class="tabpanel" id="tab-reliability" role="tabpanel" aria-label="Reliability" hidden>
+    <section class="grid row">
+      <div class="card">
+        <h2>Failed automation runs</h2>
+        <p class="small">Merge lanes, syncs, bot and nightly runs (not PR checks) that failed, per day.</p>
+        <div class="chart short" id="failures"></div>
+      </div>
+      <div class="card">
+        <h2>Time to recover</h2>
+        <p class="small">From a step failing to the next run in which that same step passes. A run that skips the step does not count.</p>
+        <div class="scroll" id="incidents"></div>
+      </div>
+    </section>
+    <section class="card">
+      <h2>Nightly test matrix</h2>
+      <p class="small">The alpha on every supported cluster, the soak, the vulnerability scans and the reproducibility rebuilds.</p>
+      <div class="scroll" id="nightly"></div>
+    </section>
+    <section class="card">
+      <h2>Operator soak</h2>
+      <div class="grid panels">
+        <div class="panel"><h3>Goroutines after the soak</h3><div class="chart short" id="soak-g"></div></div>
+        <div class="panel"><h3>Heap after the soak (MiB)</h3><div class="chart short" id="soak-h"></div></div>
+      </div>
+      <details><summary>Table</summary><div class="scroll" id="soak-table"></div></details>
+    </section>
+    <section class="card">
+      <h2>Reachable vulnerabilities</h2>
+      <p class="small">govulncheck findings across all repositories, each night.</p>
+      <div class="legend" id="vulns-legend"></div>
+      <div class="chart short" id="vulns"></div>
+      <details><summary>Table</summary><div class="scroll" id="vulns-table"></div></details>
+    </section>
+  </div>
+
+  <div class="tabpanel" id="tab-forks" role="tabpanel" aria-label="Forks" hidden>
+    <section class="card">
+      <h2>Waiting upstream commits</h2>
+      <p class="small">Upstream commits not yet in a fork's rhtas/main, all forks, when each report ran.</p>
+      <div class="chart short" id="behind"></div>
+      <details open><summary>Per fork, latest</summary><div class="scroll" id="behind-table"></div></details>
+    </section>
+    <section class="card">
+      <h2>Current carries</h2>
+      <p class="small">The commits each fork keeps on top of upstream, which every sync replays, as of the latest report. Carries stay; drops are regenerated or dropped once upstream has them; upstream PRs are picked early. A sync keeps only the newest ci pin, so pins above one are left over from before the fork's last sync.</p>
+      <div class="scroll" id="carries"></div>
+      <details><summary>Every carry</summary><div class="scroll" id="carries-table"></div></details>
+    </section>
+  </div>
+
+  <div class="tabpanel" id="tab-day" role="tabpanel" aria-label="Day report" hidden>
+    <section class="card">
+      <h2>Day report <select id="day" aria-label="Day"></select></h2>
+      <div id="dayview"></div>
+    </section>
+  </div>
+
+</main>
+</body>
+</html>

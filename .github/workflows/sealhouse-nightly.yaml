@@ -173,9 +173,22 @@ jobs:
         run: |
           [ ! -s soak-trend.tsv ] || ci/hack/soak-record.sh soak-trend.tsv
 
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Scripts
+        run: |
+          git clone -q "https://github.com/${GITHUB_REPOSITORY}.git" ci
+          git -C ci checkout -q --detach "${GITHUB_SHA}"
+      - name: Fresh
+        run: ci/hack/report-fresh.sh https://sealhouse.github.io/reports
+
   vulns:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: write
     steps:
       - name: Scripts
         run: |
@@ -187,16 +200,32 @@ jobs:
       - name: Scan
         run: |
           failed=0
+          now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          printf 'date\trepo\tosv\tmodule\tversion\tfixed\n' >vuln-rows.tsv
           while read -r repo ref; do
             echo "== ${repo}"
             git clone -q --depth 1 -b "${ref}" "https://github.com/sealhouse/${repo}.git" "tree-${repo}"
             if ci/hack/vulncheck.sh "tree-${repo}" "out/${repo}"; then
               grep -E '^(fix available|no fix yet)' "out/${repo}/summary" >>"${GITHUB_STEP_SUMMARY}" || true
+              ci/hack/vuln-trend.sh "${now}" "${repo}" "out/${repo}/summary" >>vuln-rows.tsv || failed=1
             else
               failed=1
             fi
           done < <(awk '!/^#/ { print $1, "rhtas/main" }' ci/forks.lock; echo secure-sign-pqc-operator main)
           exit "${failed}"
+      - name: Record
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ "$(wc -l <vuln-rows.tsv)" -gt 1 ] || exit 0
+          if git -C ci fetch -q origin vuln-trend; then
+            git -C ci show FETCH_HEAD:vuln-trend.tsv >vuln-trend.tsv
+            tail -n +2 vuln-rows.tsv >>vuln-trend.tsv
+          else
+            cp vuln-rows.tsv vuln-trend.tsv
+          fi
+          ci/hack/trend-record.sh vuln-trend vuln-trend.tsv
 
   rebuild:
     needs: changes

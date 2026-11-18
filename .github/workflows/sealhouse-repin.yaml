@@ -10,6 +10,7 @@ on:
       - forks.lock
       - replaces.lock
       - README.md
+      - report/**
       # Run only by ci's own workflows; test/test-repin-paths.sh keeps the callers off them.
       - hack/bot-merge.sh
       - hack/bump-pr.sh
@@ -23,11 +24,18 @@ on:
       - hack/repin.sh
       - hack/replace-consumers.sh
       - hack/replace-lib.sh
+      - hack/report-collect.sh
+      - hack/report-fresh.sh
+      - hack/report-publish.sh
+      - hack/report-rollup.sh
+      - hack/report-site.sh
       - hack/soak-record.sh
       - hack/soak.sh
       - hack/status.sh
       - hack/sync-finish.sh
       - hack/sync-fork.sh
+      - hack/trend-record.sh
+      - hack/vuln-trend.sh
       - hack/watch-microshift.sh
   workflow_dispatch:
 

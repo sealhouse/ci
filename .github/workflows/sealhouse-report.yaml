@@ -1,0 +1,65 @@
+# Collects a day's report, yesterday by default, and commits it with the rollup to sealhouse/reports.
+# A failed collection is recorded too, so a missing day always means the report did not run.
+name: sealhouse-report
+
+on:
+  schedule:
+    - cron: '30 12 * * *'
+  workflow_dispatch:
+    inputs:
+      date:
+        description: the UTC day to report, YYYY-MM-DD; yesterday when empty
+        required: false
+        default: ''
+
+permissions: {}
+
+concurrency: sealhouse-report
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      DAY: ${{ inputs.date }}
+      REPORT_RUN_ID: ${{ github.run_id }}
+      REPORT_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      REPORT_CI: ${{ github.sha }}
+    steps:
+      - name: Scripts
+        run: |
+          set -euo pipefail
+          ci="${SEALHOUSE_CI:-}"
+          if [ -z "${ci}" ]; then
+            ci="${RUNNER_TEMP}/ci"
+            git clone -q "https://github.com/${GITHUB_REPOSITORY}.git" "${ci}"
+            git -C "${ci}" checkout -q --detach "${GITHUB_SHA}"
+          fi
+          echo "CI_DIR=${ci}" >>"${GITHUB_ENV}"
+          day="${DAY:-$(date -u -d yesterday +%F)}"
+          [[ "${day}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "bad date '${day}'" >&2; exit 1; }
+          echo "DAY=${day}" >>"${GITHUB_ENV}"
+      - name: Toolchain
+        run: |
+          "${CI_DIR}/hack/install-go.sh"
+          "${CI_DIR}/hack/tools.sh" crane
+      - name: Collect
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: '"${CI_DIR}/hack/report-collect.sh" "${DAY}" "${RUNNER_TEMP}/report.json"'
+      - name: Publish
+        env:
+          BOT_APP_ID: ${{ secrets.SEALHOUSE_BOT_APP_ID }}
+          BOT_APP_KEY: ${{ secrets.SEALHOUSE_BOT_APP_KEY }}
+        run: |
+          "${CI_DIR}/hack/report-publish.sh" "${DAY}" "${RUNNER_TEMP}/report.json"
+          jq -r '"Report \(.date): \(.syncs | length) syncs, \(.images | length) images, \(.alphas | length) alphas, \(.prs | length) PRs closed"' \
+            "${RUNNER_TEMP}/report.json" >>"${GITHUB_STEP_SUMMARY}"
+      - name: Record the failure
+        if: failure()
+        env:
+          BOT_APP_ID: ${{ secrets.SEALHOUSE_BOT_APP_ID }}
+          BOT_APP_KEY: ${{ secrets.SEALHOUSE_BOT_APP_KEY }}
+        run: '[ -z "${CI_DIR:-}" ] || "${CI_DIR}/hack/report-publish.sh" "${DAY}" --failed'
