@@ -137,7 +137,13 @@ merge="$(g commit-tree "${tip}^{tree}" -p "${dest}" -p "${tip}" \
   -m "${sync_subject}$(g rev-parse --short "${tip}") into ${dest}")"
 
 work="$(mktemp -d)"
-cleanup() { g worktree remove --force "${work}" >/dev/null 2>&1 || rm -rf "${work}"; }
+cleanup() {
+  local w
+  for w in "${work}.repin" "${work}"; do
+    [ -e "${w}" ] || continue
+    g worktree remove --force "${w}" >/dev/null 2>&1 || rm -rf "${w}"
+  done
+}
 trap cleanup EXIT
 g worktree add -q --detach "${work}" "${merge}"
 
@@ -179,6 +185,33 @@ regenerate() {
   git -C "${work}" diff --cached --quiet || git -C "${work}" commit -q -C "${c}"
 }
 
+# pin_at REV prints the ci commit REV's caller workflows pin, if any.
+pin_at() {
+  { g grep -h -o -E 'sealhouse/ci/\.github/workflows/[a-z-]+\.yaml@[0-9a-f]{40}' "$1" -- '.github/workflows/sealhouse-*.yaml' || true; } |
+    awk -F@ 'NR == 1 { print $2 }'
+}
+
+# repin REV PIN pins REV's caller workflows to PIN in the scratch worktree and prints the tree.
+repin() {
+  local files
+  git -C "${work}.repin" checkout -q -f --detach "$1"
+  mapfile -t files < <(git -C "${work}.repin" ls-files -- '.github/workflows/sealhouse-*.yaml')
+  if [ "${#files[@]}" -gt 0 ]; then
+    (cd "${work}.repin" && "${root}/hack/pin-ci.sh" "$2" "${files[@]}")
+    git -C "${work}.repin" add -A -- .github/workflows
+  fi
+  git -C "${work}.repin" write-tree
+}
+
+# repinned COMMIT PIN prints a copy of COMMIT whose parent and tree both pin PIN, so a carry written
+# against a pin the sync dropped replays only its own change.
+repinned() {
+  [ -e "${work}.repin" ] || g worktree add -q --detach "${work}.repin" "$1"
+  local base
+  base="$(g commit-tree "$(repin "$1^" "$2")" -m base)"
+  g commit-tree "$(repin "$1" "$2")" -p "${base}" -m "$(g log -1 --format=%B "$1")"
+}
+
 # Only the last pin is kept, so pins do not pile up between syncs.
 last_pin=""
 for c in "${picks[@]}"; do
@@ -201,12 +234,19 @@ for c in "${picks[@]}"; do
     fi
     continue
   fi
-  if ! git -C "${work}" cherry-pick --empty=drop "${c}" >/dev/null 2>&1; then
+  pick="${c}"
+  if [ -n "$(g diff --name-only "${c}^" "${c}" -- '.github/workflows/sealhouse-*.yaml')" ]; then
+    was="$(pin_at "${c}^")"
+    have="$(pin_at "${before}")"
+    if [ -n "${was}" ] && [ -n "${have}" ] && [ "${was}" != "${have}" ]; then pick="$(repinned "${c}" "${have}")"; fi
+  fi
+  if ! git -C "${work}" cherry-pick --empty=drop "${pick}" >/dev/null 2>&1; then
     # A carry that deletes a file upstream has since changed still deletes it.
     if [ -z "$(git -C "${work}" status --porcelain | grep -E '^(U[^D]|[^U]U|DD|AA)')" ] &&
       [ -n "$(git -C "${work}" status --porcelain | grep '^UD ')" ]; then
       git -C "${work}" status --porcelain | sed -n 's/^UD //p' | xargs git -C "${work}" rm -q --
       git -C "${work}" -c core.editor=true cherry-pick --continue >/dev/null
+      [ "${pick}" = "${c}" ] || git -C "${work}" commit -q --amend --no-edit -C "${c}"
       echo "replayed ${short} $(g log -1 --format=%s "${c}") (kept its deletes over upstream changes)"
       continue
     fi
@@ -218,6 +258,9 @@ for c in "${picks[@]}"; do
   fi
   if [ "$(git -C "${work}" rev-parse HEAD)" = "${before}" ]; then
     echo "dropped ${short} $(g log -1 --format=%s "${c}") (upstream contains it)"
+  elif [ "${pick}" != "${c}" ]; then
+    git -C "${work}" commit -q --amend --no-edit -C "${c}"
+    echo "replayed ${short} $(g log -1 --format=%s "${c}") (written against ci ${was:0:12}, replayed against ${have:0:12})"
   else
     echo "replayed ${short} $(g log -1 --format=%s "${c}")"
   fi

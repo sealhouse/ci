@@ -248,3 +248,30 @@ git -C "${up}" commit -q -am "upstream: readme"
 if "${sync}" "${fork}" >/dev/null 2>"${t}/err"; then fail "a content conflict did not stop the sync"; fi
 grep -q 'conflict replaying .*readme' "${t}/err" || fail "content conflict not reported: $(cat "${t}/err")"
 echo "ok: a delete carry survives upstream changes, and a content conflict still stops the sync"
+
+# 9. A carry written against a pin the sync drops replays only its own change.
+git -C "${fork}" switch -q rhtas/main
+git -C "${fork}" reset -q --hard HEAD~1
+d="$(printf 'd%.0s' {1..40})" e="$(printf 'e%.0s' {1..40})"
+"${ci_root}/hack/pin-ci.sh" "${d}" "${fork}/${caller}"
+git -C "${fork}" commit -q -am "UPSTREAM: <drop>: Pin ci ${d:0:12}
+
+Ci-Pin: ${d}"
+printf 'secrets:\n  dispatch-app-id: id\n' >>"${fork}/${caller}"
+GIT_AUTHOR_NAME=carrier git -C "${fork}" commit -q -am "UPSTREAM: <carry>: dispatch secrets"
+"${ci_root}/hack/pin-ci.sh" "${e}" "${fork}/${caller}"
+git -C "${fork}" commit -q -am "UPSTREAM: <drop>: Pin ci ${e:0:12}
+
+Ci-Pin: ${e}"
+git -C "${fork}" switch -q main
+git -C "${up}" commit -q --allow-empty -m "upstream: after the secrets"
+out="$("${sync}" "${fork}" 2>&1)" || fail "a carry written against a dropped pin stopped the sync: ${out}"
+grep -q "^dropped .*Pin ci ${d:0:12} (a later pin replaces it)" <<<"${out}" || fail "the pin the carry was written against not dropped: ${out}"
+grep -q "^replayed .*dispatch secrets (written against ci ${d:0:12}, replayed against ${a:0:12})" <<<"${out}" || fail "the repinned replay not reported: ${out}"
+printf 'uses: sealhouse/ci/.github/workflows/pr.yaml@%s\nwith:\n  ci-ref: %s\nsecrets:\n  dispatch-app-id: id\n' "${e}" "${e}" |
+  cmp -s - <(git -C "${fork}" show "rhtas/sync:${caller}") || fail "unexpected caller: $(git -C "${fork}" show "rhtas/sync:${caller}")"
+carry="$(git -C "${fork}" log --format=%H --grep='^UPSTREAM: <carry>: dispatch secrets$' rhtas/main..rhtas/sync)"
+[ "$(git -C "${fork}" diff --numstat "${carry}^" "${carry}")" = "2	0	${caller}" ] || fail "the replayed carry is more than its change: $(git -C "${fork}" show "${carry}")"
+[ "$(git -C "${fork}" log -1 --format='%an %B' "${carry}")" = "carrier UPSTREAM: <carry>: dispatch secrets" ] || fail "the replayed carry lost its author or message"
+[ "$(git -C "${fork}" worktree list --porcelain | grep -c '^worktree ')" -eq 1 ] || fail "the sync left a worktree: $(git -C "${fork}" worktree list)"
+echo "ok: a carry written against a dropped pin replays only its own change"
