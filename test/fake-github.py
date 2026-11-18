@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""fake-github.py PORT LOG: the GitHub API calls ci's scripts make, for test-github.sh."""
+"""fake-github.py PORT LOG: the GitHub API calls ci's scripts make, for test-github.sh and test-report.sh."""
 import base64, json, re, sys
+from urllib.parse import parse_qs, urlsplit
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 port, log = int(sys.argv[1]), sys.argv[2]
@@ -17,12 +18,28 @@ class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
-    def reply(self, code, obj):
+    def reply(self, code, obj, link=None):
         data = json.dumps(obj).encode()
         self.send_response(code)
         self.send_header("Content-Length", str(len(data)))
+        if link:
+            self.send_header("Link", link)
         self.end_headers()
         self.wfile.write(data)
+
+    # page replies with one page of items, wrapped in key if given, and a Link to the next page.
+    def page(self, items, key=None):
+        size = state.get("page_size", 100)
+        q = parse_qs(urlsplit(self.path).query)
+        n = int(q.get("page", ["1"])[0])
+        chunk = items[(n - 1) * size:n * size]
+        link = None
+        if n * size < len(items):
+            q["page"] = [str(n + 1)]
+            query = "&".join(f"{k}={v[0]}" for k, v in q.items())
+            link = f'<http://127.0.0.1:{port}{urlsplit(self.path).path}?{query}>; rel="next", <http://127.0.0.1:{port}/last>; rel="last"'
+        body = {key: chunk, "total_count": len(items)} if key else chunk
+        return self.reply(200, body, link)
 
     def route(self, method):
         n = int(self.headers.get("Content-Length") or 0)
@@ -36,6 +53,10 @@ class H(BaseHTTPRequestHandler):
             auth = self.headers.get("Authorization", "")
             f.write(json.dumps({"method": method, "path": path, "auth": auth, "body": body}) + "\n")
         p = path.split("?")[0]
+        q = parse_qs(urlsplit(path).query)
+        for pattern in state.get("fail_paths", []):
+            if re.search(pattern, path):
+                return self.reply(502, {"message": "Server Error"})
         if p == "/orgs/sealhouse/installation":
             return self.reply(200, {"id": 7})
         if p == "/app/installations/7/access_tokens":
@@ -45,7 +66,24 @@ class H(BaseHTTPRequestHandler):
                 return self.reply(200, {"data": None, "errors": [{"message": "auto-merge is off"}]})
             return self.reply(200, {"data": {}})
         m = re.match(r"/repos/([^/]+/[^/]+)(/.*)$", p)
-        rest = m.group(2)
+        repo, rest = m.group(1).split("/")[1], m.group(2)
+        if method == "GET" and "pulls_by_repo" in state:
+            if rest == "/pulls" and q.get("state") == ["all"]:
+                return self.page(state["pulls_by_repo"].get(repo, []))
+            rv = re.match(r"/pulls/(\d+)/reviews$", rest)
+            if rv:
+                return self.page(state.get("reviews", {}).get(f"{repo}#{rv.group(1)}", []))
+            if rest == "/actions/runs":
+                day = q.get("created", [""])[0]
+                return self.page([r for r in state.get("runs_by_repo", {}).get(repo, []) if r["created_at"].startswith(day)], "workflow_runs")
+            wf = re.match(r"/actions/workflows/([^/]+)/runs$", rest)
+            if wf:
+                runs = [r for r in state.get("runs_by_repo", {}).get(repo, []) if r["path"].endswith("/" + wf.group(1))
+                        and r["head_sha"] == q.get("head_sha", [""])[0] and (q.get("status") != ["success"] or r["conclusion"] == "success")]
+                return self.page(runs, "workflow_runs")
+            jb = re.match(r"/actions/runs/(\d+)/jobs$", rest)
+            if jb:
+                return self.page(state.get("jobs", {}).get(jb.group(1), []), "jobs")
         if method == "GET" and rest.startswith("/contents/"):
             name = rest[len("/contents/"):]
             if name == "versions":

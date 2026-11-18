@@ -359,16 +359,20 @@ calls POST /graphql | jq -e '.body.variables.id == "PR_sync" and (.body.query | 
 calls PATCH 'refs/heads/rhtas/main$' | jq -e '.body == {sha: "feed", force: false}' >/dev/null || fail "fast-forward"
 calls DELETE 'refs/heads/rhtas/sync$' | grep -q . || fail "branch delete"
 ok "sync-finish waits, stops on red, ignores the guard and the hand-off, and fast-forwards a green sync"
-# soak-record.
+# trend-record.
 state '{"missing_refs": ["heads/soak-trend"]}'
 reset_log
-printf 'date\tresult\n' >"${t}/trend.tsv"
-GH_TOKEN=job-token "${hack}/soak-record.sh" "${t}/trend.tsv" >/dev/null
+printf 'date\tresult\n' >"${t}/soak-trend.tsv"
+GH_TOKEN=job-token "${hack}/soak-record.sh" "${t}/soak-trend.tsv" >/dev/null
 calls POST /git/refs | jq -e '.body.ref == "refs/heads/soak-trend" and .auth == null | not' >/dev/null || fail "soak-trend branch"
 calls POST /git/trees | jq -e '.body.tree[0].path == "soak-trend.tsv"' >/dev/null || fail "soak trend path"
 calls PATCH 'ci/git/refs/heads/soak-trend$' | jq -e '.body.force == false' >/dev/null || fail "soak trend ref"
 state '{"missing_refs": []}'
-ok "soak-record makes its branch and commits the trend"
+reset_log
+GH_TOKEN=job-token "${hack}/trend-record.sh" vuln-trend "${t}/soak-trend.tsv" >/dev/null
+[ -z "$(calls POST /git/refs)" ] || fail "an existing trend branch is made again"
+calls PATCH 'ci/git/refs/heads/vuln-trend$' | jq -e '.body.force == false' >/dev/null || fail "vuln trend ref"
+ok "soak-record and trend-record make their branch when absent and commit the trend"
 
 # Library releases, on real repos and a file proxy.
 gover="$(go env GOVERSION | sed -E 's/^go([0-9]+\.[0-9]+).*/\1/')"
