@@ -352,7 +352,7 @@ function attention() {
   const item = (cls, icon, text, href, more) => items.push(el("li", {}, el("span", { class: `status ${cls}` }, el("i", { "aria-hidden": "true", text: icon })),
     el("span", {}, href ? link(href, text) : text, more ? el("span", { class: "small", text: ` ${more}` }) : null)));
   const open = rollup.incidents.filter((i) => !i.to);
-  if (open.length) item("critical", "✕", `${open.length} failing step${open.length === 1 ? "" : "s"} not yet recovered`, "#reliability",
+  if (open.length) item("critical", "✕", `${open.length} failing step${open.length === 1 ? "" : "s"} not recovered by the end of ${rollup.last} UTC`, "#reliability",
     open.map((i) => `${i.workflow} (${i.step || "whole run"})`).join(", "));
   const night = rollup.nightly[rollup.nightly.length - 1];
   const broke = night ? Object.entries(night.jobs).filter(([, c]) => c === "failure").map(([n]) => n) : [];
