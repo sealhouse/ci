@@ -20,3 +20,24 @@ date	repo	osv	module	version	fixed
 2026-11-19T17:37:17Z	timestamp-authority	GO-2026-6859	stdlib	v1.27.3	v1.27.4
 2026-11-19T17:37:17Z	secure-sign-pqc-operator	GO-2026-6859	stdlib	v1.27.3	v1.27.4
 2026-11-19T17:37:17Z	secure-sign-pqc-operator	GO-2026-6859	stdlib	v1.27.3	v1.27.4
+2026-11-20T17:14:17Z	cosign	GO-2026-6859	stdlib	v1.27.3	v1.27.4
+2026-11-20T17:14:17Z	dex	GO-2026-6859	stdlib	v1.27.3	v1.27.4
+2026-11-20T17:14:17Z	dex	GO-2026-6859	stdlib	v1.27.3	v1.27.4
+2026-11-20T17:14:17Z	dex	GO-2026-6859	stdlib	v1.27.3	v1.27.4
+2026-11-20T17:14:17Z	fulcio	GO-2026-6859	stdlib	v1.27.3	v1.27.4
+2026-11-20T17:14:17Z	go-oidc	GO-2026-6859	stdlib	v1.27.3	v1.27.4
+2026-11-20T17:14:17Z	go-tuf	GO-2026-6859	stdlib	v1.27.3	v1.27.4
+2026-11-20T17:14:17Z	protobuf-specs				
+2026-11-20T17:14:17Z	rekor-tiles	GO-2026-6859	stdlib	v1.27.3	v1.27.4
+2026-11-20T17:14:17Z	rekor-tiles	GO-2026-6865	github.com/klauspost/compress	v1.20.1	v1.20.2
+2026-11-20T17:14:17Z	sigstore	GO-2026-6859	stdlib	v1.27.3	v1.27.4
+2026-11-20T17:14:17Z	sigstore	GO-2026-6859	stdlib	v1.27.3	v1.27.4
+2026-11-20T17:14:17Z	sigstore	GO-2026-6859	stdlib	v1.27.3	v1.27.4
+2026-11-20T17:14:17Z	sigstore	GO-2026-6859	stdlib	v1.27.3	v1.27.4
+2026-11-20T17:14:17Z	sigstore	GO-2026-6859	stdlib	v1.27.3	v1.27.4
+2026-11-20T17:14:17Z	sigstore-go	GO-2026-6859	stdlib	v1.27.3	v1.27.4
+2026-11-20T17:14:17Z	sigstore-go	GO-2026-6859	stdlib	v1.27.3	v1.27.4
+2026-11-20T17:14:17Z	sigstore-go	GO-2026-6865	github.com/klauspost/compress	v1.20.1	v1.20.2
+2026-11-20T17:14:17Z	timestamp-authority	GO-2026-6859	stdlib	v1.27.3	v1.27.4
+2026-11-20T17:14:17Z	secure-sign-pqc-operator	GO-2026-6859	stdlib	v1.27.3	v1.27.4
+2026-11-20T17:14:17Z	secure-sign-pqc-operator	GO-2026-6859	stdlib	v1.27.3	v1.27.4
