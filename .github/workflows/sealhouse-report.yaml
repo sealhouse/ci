@@ -1,15 +1,17 @@
-# Collects a day's report, yesterday by default, and commits it with the rollup to sealhouse/reports.
-# A failed collection is recorded too, so a missing day always means the report did not run.
+# Collects today's report, and yesterday's until it is final, and commits them with the rollup to sealhouse/reports.
+# The timer starts it every hour. A failed collection is recorded too, so a missing day always means the report did not run.
 name: sealhouse-report
+run-name: ${{ inputs.timer }}
 
 on:
-  schedule:
-    - cron: '30 12 * * *'
   workflow_dispatch:
     inputs:
       date:
-        description: the UTC day to report, YYYY-MM-DD; yesterday when empty
+        description: the UTC day to report, YYYY-MM-DD; today, and yesterday until it is final, when empty
         required: false
+        default: ''
+      timer:
+        description: set by sealhouse-timer, which names the run after it
         default: ''
 
 permissions: {}
@@ -38,28 +40,22 @@ jobs:
             git -C "${ci}" checkout -q --detach "${GITHUB_SHA}"
           fi
           echo "CI_DIR=${ci}" >>"${GITHUB_ENV}"
-          day="${DAY:-$(date -u -d yesterday +%F)}"
-          [[ "${day}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "bad date '${day}'" >&2; exit 1; }
-          echo "DAY=${day}" >>"${GITHUB_ENV}"
+          [ -z "${DAY}" ] || [[ "${DAY}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "bad date '${DAY}'" >&2; exit 1; }
       - name: Go
         run: '"${CI_DIR}/hack/install-go.sh"'
       - name: Toolchain
         run: '"${CI_DIR}/hack/tools.sh" crane'
-      - name: Collect
+      - name: Report
+        id: report
         env:
           GH_TOKEN: ${{ github.token }}
-        run: '"${CI_DIR}/hack/report-collect.sh" "${DAY}" "${RUNNER_TEMP}/report.json"'
-      - name: Publish
-        env:
           BOT_APP_ID: ${{ secrets.SEALHOUSE_BOT_APP_ID }}
           BOT_APP_KEY: ${{ secrets.SEALHOUSE_BOT_APP_KEY }}
-        run: |
-          "${CI_DIR}/hack/report-publish.sh" "${DAY}" "${RUNNER_TEMP}/report.json"
-          jq -r '"Report \(.date): \(.syncs | length) syncs, \(.images | length) images, \(.alphas | length) alphas, \(.prs | length) PRs closed"' \
-            "${RUNNER_TEMP}/report.json" >>"${GITHUB_STEP_SUMMARY}"
+        run: '"${CI_DIR}/hack/report-run.sh" ${DAY:+"${DAY}"}'
+      # report-run.sh records its own failures; this records one that stopped the run before it.
       - name: Record the failure
-        if: failure()
+        if: failure() && steps.report.outcome == 'skipped'
         env:
           BOT_APP_ID: ${{ secrets.SEALHOUSE_BOT_APP_ID }}
           BOT_APP_KEY: ${{ secrets.SEALHOUSE_BOT_APP_KEY }}
-        run: '[ -z "${CI_DIR:-}" ] || "${CI_DIR}/hack/report-publish.sh" "${DAY}" --failed'
+        run: '[ -z "${CI_DIR:-}" ] || "${CI_DIR}/hack/report-publish.sh" "${DAY:-$(date -u +%F)}" --failed'

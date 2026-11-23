@@ -153,7 +153,10 @@ state "$(jq -n \
     $(run 911 sealhouse-sync schedule main aaaa "$(iso "$(at '10:41')")" "$(iso "$(at '10:42')")" success),
     $(run 912 sealhouse-sync workflow_dispatch main aaaa "$(iso "$(at '14:00')")" "$(iso "$(at '14:06')")" success),
     $(run 920 sealhouse-repin push main aaaa "$(iso "$(at '15:00')")" "$(iso "$(at '15:00')")" failure),
-    $(run 921 sealhouse-repin push main aaaa "$(iso "$(at '16:00')")" "$(iso "$(at '16:30')")" success)]" \
+    $(run 921 sealhouse-repin push main aaaa "$(iso "$(at '16:00')")" "$(iso "$(at '16:30')")" success),
+    $(run 930 sealhouse-nightly workflow_dispatch main aaaa 2026-03-02T23:00:00Z 2026-03-02T23:30:00Z '' | jq -c '.status = "in_progress"'),
+    $(run 940 sealhouse-timer workflow_dispatch main aaaa 2026-03-02T10:00:00Z 2026-03-02T10:01:00Z failure),
+    $(run 941 sealhouse-report workflow_dispatch main aaaa 2026-03-02T10:05:00Z 2026-03-02T10:07:00Z failure)]" \
   '{page_size: 2, fail_paths: [],
     pulls_by_repo: {"timestamp-authority": $tsa, "secure-sign-pqc-operator": $op, ci: $ci},
     reviews: {"secure-sign-pqc-operator#5": [{user: {login: "maint"}, state: "APPROVED"}, {user: {login: "sealhouse-bot[bot]"}, state: "APPROVED"}],
@@ -172,7 +175,7 @@ out="${t}/out"
 mkdir -p "${out}"
 "${hack}/report-collect.sh" "${day}" "${out}/${day}.json"
 r="${out}/${day}.json"
-jq -e '.schema == 1 and .status == "ok" and .date == "2026-03-10" and .window == {from: "2026-03-10T00:00:00Z", to: "2026-03-11T00:00:00Z"}
+jq -e '.schema == 1 and .status == "ok" and .partial == false and .date == "2026-03-10" and .window == {from: "2026-03-10T00:00:00Z", to: "2026-03-11T00:00:00Z"}
   and .run == {id: "77", url: "https://github.example/runs/77", ci: "c1c1", collected_at: "2026-03-11T12:30:00Z"}' "${r}" >/dev/null || fail "header"
 jq -e --arg u0 "${u0}" --arg u2 "${u2}" '.syncs == [
   {repo: "timestamp-authority", pr: 6, opened_at: "2026-03-10T01:00:00Z", closed_at: "2026-03-10T01:30:00Z", merged: false, upstream: null},
@@ -222,6 +225,16 @@ ok "a rerun of the same day gives the same report, but for the run and the snaps
 jq -e '.status == "ok" and .syncs == [] and .images == [] and .prs == [] and .alphas == [] and .runs == [] and .nightly == []
   and .soak == [] and .vulns == []' "${out}/2026-03-01.json" >/dev/null || fail "quiet day"
 ok "a quiet day still gets a report, with nothing in it"
+
+REPORT_NOW="$(iso "$(at '18:00')")" "${hack}/report-collect.sh" "${day}" "${out}/so-far.json"
+jq -e '.partial' "${out}/so-far.json" >/dev/null || fail "a day collected before its end is not partial"
+"${hack}/report-collect.sh" 2026-03-02 "${out}/2026-03-02.json"
+jq -e '.partial and ([.runs[].id] == [930])' "${out}/2026-03-02.json" >/dev/null || fail "running day: $(jq -c '[.partial, [.runs[].id]]' "${out}/2026-03-02.json")"
+mkdir -p "${t}/partial"
+cp "${out}/2026-03-02.json" "${t}/partial/"
+"${hack}/report-rollup.sh" "${t}/partial" "${t}/partial.json"
+jq -e '.days[0].partial and .days[0].runs == 1 and .days[0].runs_failed == 0' "${t}/partial.json" >/dev/null || fail "rollup partial: $(jq -c .days "${t}/partial.json")"
+ok "a day is partial until it has ended and its runs have completed; the timer's and the report's own runs are left out"
 
 "${hack}/report-collect.sh" 2026-03-07 "${out}/2026-03-07.json"
 jq -e --arg c0 "${c0}" '.images == [{repo: "timestamp-authority", commit: $c0, branch: "rhtas/main", image: "tsa", pushed: false, digest: null,
@@ -309,6 +322,44 @@ git -C "${rep}" push -q "${gitroot}/sealhouse/reports.git" main
 calls POST /git/blobs | jq -se '.[0].body.content | fromjson | .status == "failed" and .run.url == "https://github.example/runs/77"' >/dev/null ||
   fail "failed marker"
 ok "a failed collection is recorded, but never over a good report"
+
+: >"${log}"
+REPORT_HEARTBEAT=24 "${hack}/report-publish.sh" "${day}" "${out}/again.json" | grep -q 'unchanged since 2026-03-11T12:30:00Z' || fail "no unchanged note"
+[ -z "$(calls POST /git/trees)" ] || fail "an unchanged report was committed"
+"${hack}/report-publish.sh" "${day}" "${out}/again.json" >/dev/null
+calls POST /git/blobs | jq -se '.[0].body.content | fromjson | .run.collected_at == "2026-03-12T01:00:00Z"' >/dev/null || fail "the heartbeat did not commit"
+: >"${log}"
+jq '.prs = []' "${out}/again.json" >"${t}/changed.json"
+REPORT_HEARTBEAT=24 "${hack}/report-publish.sh" "${day}" "${t}/changed.json" >/dev/null
+calls POST /git/blobs | jq -se '.[0].body.content | fromjson | .prs == []' >/dev/null || fail "a changed report was not committed"
+: >"${log}"
+"${hack}/report-publish.sh" "${day}" "${out}/so-far.json" >/dev/null
+calls POST 'reports/git/commits$' | jq -e '.body.message == "Report 2026-03-10 (so far)"' >/dev/null || fail "partial publish message"
+ok "an unchanged report is not committed until the heartbeat, a changed one is, and a partial one says so far"
+
+# report-run: today, after yesterday while reports has no final report for it.
+: >"${log}"
+REPORT_NOW=2026-03-11T05:00:00Z "${hack}/report-run.sh" >/dev/null
+[ "$(calls POST /git/trees | jq -c '[.body.tree[].path]')" = '["data/daily/2026-03-11.json","data/rollup.json"]' ] ||
+  fail "report-run with a final yesterday: $(calls POST /git/trees | jq -c '[.body.tree[].path]')"
+jq '.partial = true' "${r}" >"${rep}/data/daily/${day}.json"
+git -C "${rep}" add data
+commit "${rep}" "$(at '+1 day 13:00')" "Report" >/dev/null
+git -C "${rep}" push -q "${gitroot}/sealhouse/reports.git" main
+: >"${log}"
+REPORT_NOW=2026-03-11T05:00:00Z "${hack}/report-run.sh" >/dev/null
+[ "$(calls POST /git/trees | jq -c '[.body.tree[0].path]')" = '["data/daily/2026-03-10.json"]
+["data/daily/2026-03-11.json"]' ] || fail "report-run with a partial yesterday: $(calls POST /git/trees | jq -c '[.body.tree[0].path]')"
+: >"${log}"
+REPORT_NOW=2026-03-11T05:00:00Z "${hack}/report-run.sh" 2026-03-08 >/dev/null
+[ "$(calls POST /git/trees | jq -c '[.body.tree[0].path]')" = '["data/daily/2026-03-08.json"]' ] || fail "report-run with a date"
+state '{"fail_paths": ["/reviews"]}'
+: >"${log}"
+if REPORT_NOW=2026-03-11T05:00:00Z "${hack}/report-run.sh" >/dev/null 2>&1; then fail "report-run passed a failed collection"; fi
+calls POST /git/blobs | jq -se 'map(.body.content | fromjson | select(.status == "failed") | .date) == ["2026-03-11"]' >/dev/null ||
+  fail "report-run failure markers: $(calls POST /git/blobs | jq -c '.body.content | fromjson | [.date, .status]' 2>/dev/null)"
+state '{"fail_paths": []}'
+ok "report-run reports today, finishes a partial yesterday first, takes a date, and records a failure without covering a good report"
 
 # The site: assembled from the rollup, and refused when a vendored file was changed.
 "${hack}/report-site.sh" "${rep}/data" "${t}/site" 2>/dev/null && fail "a site without a rollup was assembled"

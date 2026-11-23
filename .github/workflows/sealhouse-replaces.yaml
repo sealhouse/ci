@@ -1,23 +1,26 @@
 # Releases fork libraries into replaces.lock and takes the consumers to the new lines.
 name: sealhouse-replaces
+run-name: ${{ inputs.timer }}
 
 on:
   push:
     branches: [main]
     paths: [replaces.lock]
-  schedule:
-    - cron: '23 7 * * *'
   workflow_dispatch:
     inputs:
       fork:
-        required: true
+        description: the fork to release a library from; needed unless the timer starts the run
+        default: ''
       subdir:
         default: .
       reason:
-        required: true
+        default: ''
       drop-when:
         description: upstream>=vX.Y.Z
-        required: true
+        default: ''
+      timer:
+        description: set by sealhouse-timer, which names the run after it
+        default: ''
 
 permissions: {}
 
@@ -41,19 +44,21 @@ jobs:
           git -C ci checkout -q --detach "${GITHUB_SHA}"
           ci/hack/install-go.sh
       - name: Release
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && !inputs.timer
         env:
           FORK: ${{ inputs.fork }}
           SUBDIR: ${{ inputs.subdir }}
           REASON: ${{ inputs.reason }}
           DROP_WHEN: ${{ inputs.drop-when }}
-        run: ci/hack/release-library.sh "${FORK}" "${SUBDIR}" "${REASON}" "${DROP_WHEN}"
+        run: |
+          [ -n "${FORK}" ] && [ -n "${REASON}" ] && [ -n "${DROP_WHEN}" ] || { echo "a release needs fork, reason and drop-when" >&2; exit 1; }
+          ci/hack/release-library.sh "${FORK}" "${SUBDIR}" "${REASON}" "${DROP_WHEN}"
       - name: Release what changed
-        if: github.event_name == 'schedule'
+        if: ${{ inputs.timer }}
         run: ci/hack/release-library.sh --auto
       - name: Consumers
-        if: github.event_name != 'workflow_dispatch'
+        if: github.event_name != 'workflow_dispatch' || inputs.timer
         run: ci/hack/replace-consumers.sh
       - name: Removable
-        if: github.event_name == 'schedule'
+        if: ${{ inputs.timer }}
         run: ci/hack/release-library.sh --removable | tee -a "${GITHUB_STEP_SUMMARY}"

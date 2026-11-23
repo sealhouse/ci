@@ -704,4 +704,42 @@ GO_BUILDER="${pinned}" "${hack}/watch-go.sh" "${t}/go-fix" >/dev/null 2>&1 || fa
 printf 'DAYS=7\n' >"${SEALHOUSE_VULNS}"
 ok "vuln-fix, bump-pr and watch-go all wait out a fix that is still baking"
 
+# timer: at 10:10, wf-a ran for 08:40; wf-b ran for 09:05 and by hand at 10:06, neither of which is its 10:05;
+# wf-c's 23:50 was missed yesterday; the operator's 09:40 was cancelled.
+export SEALHOUSE_SCHEDULE="${t}/schedule.lock"
+printf '# test\nci wf-a.yaml 08:40\nci wf-b.yaml *:05 x=1\nci wf-c.yaml 11:00,23:50\nsecure-sign-pqc-operator res.yaml 09:40 long=true\n' >"${SEALHOUSE_SCHEDULE}"
+trun() { jq -nc --arg w "$1" --arg t "$2" --arg e "$3" --arg c "$4" '{path: (".github/workflows/" + $w), display_title: $t, event: $e, created_at: $c}'; }
+state "$(jq -n --argjson ci "[$(trun wf-a.yaml 'timer 2026-11-23T08:40Z' workflow_dispatch 2026-11-23T08:41:00Z),
+  $(trun wf-b.yaml 'timer 2026-11-23T09:05Z' workflow_dispatch 2026-11-23T09:06:00Z), $(trun wf-b.yaml sealhouse-wf-b workflow_dispatch 2026-11-23T10:06:00Z),
+  $(trun wf-c.yaml 'timer 2026-11-22T23:50Z' schedule 2026-11-22T23:51:00Z)]" \
+  --argjson op "[$(trun res.yaml 'timer 2026-11-23T09:40Z' workflow_dispatch 2026-11-23T09:41:00Z | jq -c '.conclusion = "cancelled"')]" \
+  '{runs_by_repo: {ci: $ci, "secure-sign-pqc-operator": $op}, fail_paths: []}')"
+reset_log
+GH_TOKEN=ci-token TIMER_NOW=2026-11-23T10:10:00Z "${hack}/timer.sh" >"${t}/timer.out"
+[ "$(cat "${t}/timer.out")" = "ci wf-a.yaml: ran for 2026-11-23T08:40Z
+ci wf-b.yaml: started for 2026-11-23T10:05Z
+ci wf-c.yaml: started for 2026-11-22T23:50Z
+secure-sign-pqc-operator res.yaml: started for 2026-11-23T09:40Z" ] || fail "timer: $(cat "${t}/timer.out")"
+[ "$(calls POST /dispatches | jq -cS '[.path, .auth, .body]' | sort)" = "$(printf '%s\n' \
+  '["/repos/sealhouse/ci/actions/workflows/wf-b.yaml/dispatches","Bearer ci-token",{"inputs":{"timer":"timer 2026-11-23T10:05Z","x":"1"},"ref":"main"}]' \
+  '["/repos/sealhouse/ci/actions/workflows/wf-c.yaml/dispatches","Bearer ci-token",{"inputs":{"timer":"timer 2026-11-22T23:50Z"},"ref":"main"}]' \
+  '["/repos/sealhouse/secure-sign-pqc-operator/actions/workflows/res.yaml/dispatches","Bearer installation-token",{"inputs":{"long":"true","timer":"timer 2026-11-23T09:40Z"},"ref":"main"}]')" ] ||
+  fail "timer dispatches: $(calls POST /dispatches | jq -cS '[.path, .auth, .body]')"
+calls GET 'wf-a.yaml/runs' | jq -e '.path | test("event=workflow_dispatch&created=%3E%3D2026-11-23T08:40:00Z")' >/dev/null || fail "timer lists runs since the time"
+calls POST access_tokens | jq -e '.body == {permissions: {actions: "write"}, repositories: ["secure-sign-pqc-operator"]}' >/dev/null || fail "timer token scope"
+ok "timer starts each workflow whose latest time has no run it started, or only a cancelled one, yesterday's too, with ci's token for ci and the dispatch App's elsewhere"
+
+printf 'ci wf-a.yaml 8:40\nci wf-d.yaml 00:00\n' >"${SEALHOUSE_SCHEDULE}"
+state '{"fail_paths": ["wf-d.yaml/dispatches"]}'
+reset_log
+GH_TOKEN=ci-token TIMER_NOW=2026-11-23T10:10:00Z expect_fail "${hack}/timer.sh"
+grep -q 'bad time 8:40' "${t}/out" && grep -q 'wf-d.yaml: cannot start it' "${t}/out" || fail "timer failures: $(cat "${t}/out")"
+calls POST /dispatches | jq -se 'length > 0 and all(.path | test("wf-d.yaml"))' >/dev/null || fail "a bad row stopped the next one"
+state '{"fail_paths": []}'
+unset SEALHOUSE_SCHEDULE
+reset_log
+GH_TOKEN=ci-token TIMER_NOW=2026-11-23T10:10:00Z "${hack}/timer.sh" >/dev/null || fail "timer refused schedule.lock"
+[ "$(calls POST /dispatches | wc -l)" -eq "$(grep -c '^[a-z]' "${root}/schedule.lock")" ] || fail "schedule.lock: not every row started"
+ok "timer fails on a bad time or a refused start but carries on with the other rows; schedule.lock parses"
+
 echo "test-github: all passed"

@@ -10,6 +10,7 @@ on:
       - forks.lock
       - replaces.lock
       - vulns.lock
+      - schedule.lock
       - README.md
       - report/**
       # Run only by ci's own workflows; test/test-repin-paths.sh keeps the callers off them.
@@ -29,12 +30,14 @@ on:
       - hack/report-fresh.sh
       - hack/report-publish.sh
       - hack/report-rollup.sh
+      - hack/report-run.sh
       - hack/report-site.sh
       - hack/soak-record.sh
       - hack/soak.sh
       - hack/status.sh
       - hack/sync-finish.sh
       - hack/sync-fork.sh
+      - hack/timer.sh
       - hack/trend-record.sh
       - hack/vuln-due.sh
       - hack/vuln-fix.sh
