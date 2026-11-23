@@ -9,6 +9,7 @@ on:
       - .github/workflows/sealhouse-*.yaml
       - forks.lock
       - replaces.lock
+      - vulns.lock
       - README.md
       - report/**
       # Run only by ci's own workflows; test/test-repin-paths.sh keeps the callers off them.
@@ -35,7 +36,9 @@ on:
       - hack/sync-finish.sh
       - hack/sync-fork.sh
       - hack/trend-record.sh
-      - hack/vuln-trend.sh
+      - hack/vuln-due.sh
+      - hack/vuln-fix.sh
+      - hack/watch-go.sh
       - hack/watch-microshift.sh
   workflow_dispatch:
 

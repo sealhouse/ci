@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bot-merge.sh [REPO BASE] merges green ci-pin and replaces PRs that only sealhouse-bot wrote, on every caller or on REPO.
+# bot-merge.sh [REPO BASE] merges green ci-pin, replaces and vulns PRs that only sealhouse-bot wrote, on every caller or on REPO.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -72,7 +72,7 @@ while read -r number ref sha author; do
         continue
       fi
       ;;
-    replaces/*)
+    replaces/* | vulns/*)
       if ! jq -e 'length > 0 and all(.[]; .filename | test("(^|/)go\\.(mod|sum)$"))' <<<"${files}" >/dev/null; then
         echo "${repo}: PR ${number} (${ref}) changes more than go.mod and go.sum: it needs a maintainer"
         continue
@@ -88,4 +88,4 @@ while read -r number ref sha author; do
     continue
   fi
   echo "${repo}: merged PR ${number} (${ref})"
-done < <(jq -r '[.[] | select(.head.ref | test("^(ci-pin|replaces)/"))] | sort_by(.number) | .[] | "\(.number) \(.head.ref) \(.head.sha) \(.user.login)"' <<<"${pulls}")
+done < <(jq -r '[.[] | select(.head.ref | test("^(ci-pin|replaces|vulns)/"))] | sort_by(.number) | .[] | "\(.number) \(.head.ref) \(.head.sha) \(.user.login)"' <<<"${pulls}")

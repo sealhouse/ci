@@ -1,0 +1,4 @@
+# Days a fix's release ages before ci takes it, so a bad fix has time to show. Go's own fixes count from the Go release.
+DAYS=7
+# <osv> <reason>: taken as soon as its fix is out, whatever the fix's age.
+# GO-2026-1234 exploited in the wild

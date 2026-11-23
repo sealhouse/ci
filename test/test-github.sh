@@ -53,10 +53,28 @@ calls POST 'sealhouse/ci/actions/workflows/sealhouse-bump.yaml/dispatches' |
   jq -e '.auth == "Bearer installation-token" and .body == {ref: "main", inputs: {fork: "cosign", image: "x"}}' >/dev/null || fail "dispatch"
 ok "request-lane signs a JWT, narrows its token and dispatches"
 
-# bump-pr. The registry holds the fork's image under its merge lane's tag.
+# bump-pr. The registry holds the fork's image under its merge lane's tag, and the fork's commit is
+# scanned against a local vulnerability database in which example.com/vulnlib's Bad is fixed in v1.0.1.
+export GOVULNDB="file://${t}/vulndb"
+mkdir -p "${t}/vulndb/index" "${t}/vulndb/ID"
+echo '{"modified": "2026-01-01T00:00:00Z"}' >"${t}/vulndb/index/db.json"
+echo '[{"path": "example.com/vulnlib", "vulns": [{"id": "GO-2099-0001", "modified": "2026-01-01T00:00:00Z", "fixed": "1.0.1"}]}]' >"${t}/vulndb/index/modules.json"
+jq -n '{schema_version: "1.3.1", id: "GO-2099-0001", modified: "2026-01-01T00:00:00Z", published: "2026-01-01T00:00:00Z", summary: "Bad is bad",
+  affected: [{package: {name: "example.com/vulnlib", ecosystem: "Go"}, ranges: [{type: "SEMVER", events: [{introduced: "0"}, {fixed: "1.0.1"}]}],
+    ecosystem_specific: {imports: [{path: "example.com/vulnlib", symbols: ["Bad"]}]}}]}' >"${t}/vulndb/ID/GO-2099-0001.json"
+gover="$(go env GOVERSION | sed -E 's/^go([0-9]+\.[0-9]+).*/\1/')"
+tsa="${t}/tsa-src"
+git init -q -b rhtas/main "${tsa}"
+printf 'module example.com/tsa\n\ngo %s\n' "${gover}" >"${tsa}/go.mod"
+printf 'package tsa\n' >"${tsa}/tsa.go"
+git -C "${tsa}" add -A
+git -C "${tsa}" -c user.name=test -c user.email=test@test.invalid commit -q -m tsa
+mkdir -p "${t}/origin"
+git clone -q --bare "${tsa}" "${t}/origin/timestamp-authority.git"
+export SEALHOUSE_GIT_BASE="${t}/origin"
 : >"${t}/empty"
 tar -C "${t}" -cf "${t}/layer.tar" empty
-commit=0123456789abcdef0123456789abcdef01234567
+commit="$(git -C "${tsa}" rev-parse HEAD)"
 crane append --insecure -f "${t}/layer.tar" -t "${registry}/sealhouse/tsa:rhtas-main-${commit:0:12}" >/dev/null 2>&1
 digest="$(crane digest --insecure "${registry}/sealhouse/tsa:rhtas-main-${commit:0:12}")"
 image="${registry}/sealhouse/tsa@${digest}"
@@ -157,16 +175,19 @@ merge_with() { # PULLS EXTRA_STATE
 }
 good_pin="$(pinfile .github/workflows/sealhouse-pr.yaml "${o40}" "${p40}")"
 good_rep='[{"filename": "go.mod", "status": "modified"}, {"filename": "tools/go.sum", "status": "modified"}]'
-merge_with "[$(botpr 4 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]'), $(botpr 6 replaces/abc 'sealhouse-bot[bot]'), $(botpr 7 bump/2.0-tsa-image-abc 'sealhouse-bot[bot]'), $(botpr 8 ci-pin/xyz someone)]" \
+merge_with "[$(botpr 4 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]'), $(botpr 6 replaces/abc 'sealhouse-bot[bot]'), $(botpr 7 bump/2.0-tsa-image-abc 'sealhouse-bot[bot]'), $(botpr 8 ci-pin/xyz someone), $(botpr 10 vulns/abc 'sealhouse-bot[bot]')]" \
   "$(jq -nc --argjson pc "$(signed "${pin_msg}")" --argjson rc "$(signed $'UPSTREAM: <drop>: Replace modules\n\nGo-Replaces: replaces.lock')" \
-    --argjson pf "[${good_pin}]" --argjson rf "${good_rep}" '{pr_commits: {"4": $pc, "6": $rc}, pr_files: {"4": $pf, "6": $rf}}')"
+    --argjson vc "$(signed $'UPSTREAM: <drop>: Fix GO-2099-0001\n\nGo-Get: . example.com/vulnlib@v1.0.1')" \
+    --argjson pf "[${good_pin}]" --argjson rf "${good_rep}" '{pr_commits: {"4": $pc, "6": $rc, "10": $vc}, pr_files: {"4": $pf, "6": $rf, "10": $rf}}')"
 calls POST access_tokens | jq -e '.body == {permissions: {contents: "write", pull_requests: "write", checks: "read", workflows: "write"}, repositories: ["app", "ci"]}' >/dev/null || fail "bot-merge token scope"
 calls PUT 'pulls/4/merge$' | jq -e --arg p "${p40}" '.body == {merge_method: "squash", sha: "sha4", commit_title: "UPSTREAM: <drop>: Pin ci \($p[0:12])", commit_message: "Ci-Pin: \($p)"}' >/dev/null || fail "ci-pin merge keeps its trailer"
 calls GET "ci/compare/${p40}...main" | grep -q . || fail "the pin was not checked against ci main"
 calls PUT 'pulls/6/merge$' | jq -e '.body.commit_message == "Go-Replaces: replaces.lock"' >/dev/null || fail "replaces merge keeps its trailer"
+calls PUT 'pulls/10/merge$' | jq -e '.body == {merge_method: "squash", sha: "sha10", commit_title: "UPSTREAM: <drop>: Fix GO-2099-0001", commit_message: "Go-Get: . example.com/vulnlib@v1.0.1"}' >/dev/null ||
+  fail "vulns merge keeps its trailer"
 [ -z "$(calls PUT 'pulls/(7|8)/merge$')" ] || fail "merged a bump or someone else's PR"
 grep -q 'PR 8 (ci-pin/xyz) is not from' "${t}/out" || fail "someone else's PR not reported"
-ok "bot-merge squashes green ci-pin and replaces PRs from the bot, keeping their trailers, and leaves bumps alone"
+ok "bot-merge squashes green ci-pin, replaces and vulns PRs from the bot, keeping their trailers, and leaves bumps alone"
 
 refused() { # NAME PR_COMMITS PR_FILES [EXTRA_STATE]
   merge_with "[$(botpr 4 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]')]" \
@@ -189,6 +210,9 @@ grep -q 'waiting for its checks' "${t}/out" || fail "running checks not reported
 merge_with "[$(botpr 6 replaces/abc 'sealhouse-bot[bot]')]" \
   "$(jq -nc --argjson c "$(signed x)" '{pr_commits: {"6": $c}, pr_files: {"6": [{filename: "main.go", status: "modified"}]}}')"
 [ -z "$(calls PUT 'pulls/6/merge$')" ] || fail "merged a replaces PR that changes code"
+merge_with "[$(botpr 10 vulns/abc 'sealhouse-bot[bot]')]" \
+  "$(jq -nc --argjson c "$(signed x)" '{pr_commits: {"10": $c}, pr_files: {"10": [{filename: "go.mod", status: "modified"}, {filename: "main.go", status: "modified"}]}}')"
+[ -z "$(calls PUT 'pulls/10/merge$')" ] || fail "merged a vulns PR that changes code"
 ok "bot-merge refuses foreign or unsigned commits, changes beyond the pin or go.mod, pins off ci main, and unfinished checks"
 
 merge_with "[$(botpr 4 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]'), {\"number\": 9, \"user\": {\"login\": \"sealhouse-sync[bot]\"}, \"head\": {\"ref\": \"rhtas/sync\", \"sha\": \"s\"}}]" \
@@ -375,7 +399,6 @@ calls PATCH 'ci/git/refs/heads/vuln-trend$' | jq -e '.body.force == false' >/dev
 ok "soak-record and trend-record make their branch when absent and commit the trend"
 
 # Library releases, on real repos and a file proxy.
-gover="$(go env GOVERSION | sed -E 's/^go([0-9]+\.[0-9]+).*/\1/')"
 export GOPROXY="file://${t}/proxy" GONOPROXY=none GOSUMDB=off GOFLAGS= GOWORK=off GOMODCACHE="${t}/modcache" GOTOOLCHAIN=local
 publish() {
   local served="$1" ver="$2" mod="$3" dir="${t}/proxy/$1/@v" src="${t}/src/$1@$2"
@@ -464,5 +487,221 @@ reset_log
 "${hack}/replace-consumers.sh" >/dev/null 2>&1
 [ -z "$(calls POST /git/commits)" ] || fail "opened the same replaces PR twice"
 ok "replace-consumers opens one labelled PR per consumer and closes stale ones"
+
+# Vulnerability fixes: example.com/vulnlib v1.0.0's Bad is GO-2099-0001, fixed in v1.0.1.
+for v in v1.0.0 v1.0.1; do
+  src="${t}/src/example.com/vulnlib@${v}" dir="${t}/proxy/example.com/vulnlib/@v"
+  mkdir -p "${src}" "${dir}"
+  printf 'module example.com/vulnlib\n\ngo %s\n' "${gover}" >"${src}/go.mod"
+  printf 'package vulnlib\n\nfunc Bad() {}\n' >"${src}/vulnlib.go"
+  cp "${src}/go.mod" "${dir}/${v}.mod"
+  printf '{"Version":"%s","Time":"2026-01-01T00:00:00Z"}\n' "${v}" >"${dir}/${v}.info"
+  (cd "${t}/src" && zip -qr "${dir}/${v}.zip" "example.com/vulnlib@${v}")
+  echo "${v}" >>"${dir}/list"
+done
+# released SERVED VERSION AGE_DAYS puts a version in the proxy, released AGE_DAYS ago.
+released() {
+  local dir="${t}/proxy/$1/@v"
+  mkdir -p "${dir}"
+  printf 'module %s\n' "$1" >"${dir}/$2.mod"
+  printf '{"Version":"%s","Time":"%s"}\n' "$2" "$(date -u -d "$3 days ago" +%Y-%m-%dT%H:%M:%SZ)" >"${dir}/$2.info"
+  echo "$2" >>"${dir}/list"
+}
+# Go's release dates come from its toolchain module.
+released golang.org/toolchain v0.0.1-go1.27.4.linux-amd64 30
+# vulnerable DIR MODULE writes a module in DIR that reaches Bad.
+vulnerable() {
+  mkdir -p "$1"
+  printf 'module %s\n\ngo %s\n' "$2" "${gover}" >"$1/go.mod"
+  printf 'package main\n\nimport "example.com/vulnlib"\n\nfunc main() { vulnlib.Bad() }\n' >"$1/main.go"
+  go -C "$1" get example.com/vulnlib@v1.0.0 2>/dev/null
+}
+vfork="${t}/vfork-src"
+git init -q -b rhtas/main "${vfork}"
+vulnerable "${vfork}" example.com/vfork
+vulnerable "${vfork}/cmd" example.com/vfork/cmd
+vulnerable "${vfork}/cmd/testdata/x" example.com/vfork/cmd/testdata
+repo_from "${vfork}" vfork "UPSTREAM: <carry>: vfork"
+git clone -q -b rhtas/main "${t}/origin/vfork.git" "${t}/vfork-scan"
+"${hack}/vulncheck.sh" "${t}/vfork-scan" >"${t}/vfork-summary"
+[ "$(grep -c '^fix available: GO-2099-0001 in example.com/vulnlib@v1.0.0, fixed in v1.0.1 ' "${t}/vfork-summary")" -eq 2 ] ||
+  fail "vulncheck did not find Bad in both modules: $(cat "${t}/vfork-summary")"
+echo 'fix available: GO-2099-0002 in stdlib@v1.27.3, fixed in v1.27.4 (example.com/vfork)' >>"${t}/vfork-summary"
+echo 'no fix yet: GO-2099-0003 in example.com/other@v1.0.0 (example.com/vfork)' >>"${t}/vfork-summary"
+
+gets=$'. example.com/vulnlib@v1.0.1\ncmd example.com/vulnlib@v1.0.1'
+name="vulns/$(sha256sum <<<"${gets}" | cut -c1-12)"
+vpr() { printf '{"number": %s, "node_id": "PR_%s", "base": {"ref": "%s"}, "head": {"ref": "%s", "sha": "s"}}' "$1" "$1" "$2" "$3"; }
+state "{\"pulls\": [$(vpr 21 rhtas/main vulns/oldoldoldold), $(vpr 22 rhtas/main replaces/keep)], \"pr_details\": {}}"
+reset_log
+"${hack}/vuln-fix.sh" vfork rhtas/main "${t}/vfork-summary" >"${t}/out" 2>&1 || { cat "${t}/out"; fail "vuln-fix"; }
+message="$(calls POST /git/commits | jq -r .body.message)"
+[ "${message}" = $'UPSTREAM: <drop>: Fix GO-2099-0001\n\nGo-Get: . example.com/vulnlib@v1.0.1\nGo-Get: cmd example.com/vulnlib@v1.0.1' ] ||
+  fail "the carry's message: ${message}"
+[ "$(calls POST /git/commits | wc -l)" -eq 1 ] || fail "one commit for every module fix"
+calls POST /git/trees | jq -e '[.body.tree[].path] | sort == ["cmd/go.mod", "cmd/go.sum", "go.mod", "go.sum"]' >/dev/null || fail "the fix changes go.mod and go.sum in both modules"
+[ "$(calls POST /git/blobs | jq -r .body.content | grep -c 'example.com/vulnlib v1.0.1$')" -eq 2 ] || fail "go.mod does not require the fixed version"
+calls POST 'vfork/git/refs$' | jq -e --arg r "refs/heads/${name}" '.body.ref == $r' >/dev/null || fail "the branch"
+calls POST 'vfork/pulls$' | jq -e --arg n "${name}" '.body.base == "rhtas/main" and .body.head == $n and .body.title == "UPSTREAM: <drop>: Fix GO-2099-0001"' >/dev/null || fail "the PR"
+calls POST /graphql | jq -e '.body.query | test("commitBody: \"Go-Get: . example.com/vulnlib@v1.0.1\\\\nGo-Get: cmd example.com/vulnlib@v1.0.1\"")' >/dev/null ||
+  fail "the squash must keep the trailers"
+calls PATCH 'pulls/21$' | jq -e '.body.state == "closed"' >/dev/null || fail "stale vulns PR left open"
+calls DELETE 'vulns/oldoldoldold$' | grep -q . || fail "stale vulns branch left"
+[ -z "$(calls PATCH 'pulls/22$')" ] || fail "closed a replaces PR"
+
+# The commit, made for real: the sync reads its trailers, and nothing reachable is left.
+scan="${t}/vfork-scan"
+base="$(git -C "${scan}" rev-parse HEAD)"
+for path in go.mod go.sum cmd/go.mod cmd/go.sum; do
+  i="$(calls POST /git/trees | jq -r --arg p "${path}" '.body.tree | map(.path) | index($p)')"
+  calls POST /git/blobs | jq -rs --argjson i "${i}" '.[$i].body.content' >"${scan}/${path}"
+done
+printf '%s' "${message}" >"${t}/message"
+git -C "${scan}" add -A
+git -C "${scan}" commit -q -F "${t}/message"
+"${hack}/fork-sync.sh" --check --since "${base}" "${scan}" >/dev/null || fail "the sync refuses the carry"
+"${hack}/vulncheck.sh" "${scan}" | grep -qx 'govulncheck: no reachable vulnerabilities' || fail "the fix left Bad reachable"
+ok "vuln-fix opens one <drop> carry PR with Go-Get trailers that clears the findings, leaving Go to a person"
+
+state "{\"pulls\": [$(vpr 30 rhtas/main "${name}")], \"pr_details\": {\"30\": {\"mergeable\": true}}, \"checks\": ${running}}"
+reset_log
+"${hack}/vuln-fix.sh" vfork rhtas/main "${t}/vfork-summary" | grep -q "${name} is open" || fail "an open fix PR"
+[ -z "$(calls POST /git/commits)$(calls PATCH 'pulls/30$')" ] || fail "replaced a fix PR that still merges"
+state "{\"checks\": ${red}}"
+expect_fail "${hack}/vuln-fix.sh" vfork rhtas/main "${t}/vfork-summary"
+grep -q "PR 30 (${name}) needs a maintainer: pr / pr" "${t}/out" || fail "a red fix PR not reported"
+state "{\"checks\": ${green}}"
+state "{\"pulls\": [$(vpr 30 rhtas/main "${name}")], \"pr_details\": {\"30\": {\"mergeable\": false}}}"
+reset_log
+"${hack}/vuln-fix.sh" vfork rhtas/main "${t}/vfork-summary" >/dev/null
+calls PATCH 'pulls/30$' | jq -e '.body.state == "closed"' >/dev/null || fail "a fix PR that no longer merges left open"
+[ "$(calls POST 'vfork/pulls$' | wc -l)" -eq 1 ] || fail "no new fix PR for one that no longer merges"
+ok "vuln-fix keeps an open fix PR, fails while its checks are red, and opens it again once its base has moved away from it"
+
+grep stdlib "${t}/vfork-summary" >"${t}/go-only"
+state "{\"pulls\": [$(vpr 21 rhtas/main vulns/oldoldoldold)]}"
+reset_log
+"${hack}/vuln-fix.sh" vfork rhtas/main "${t}/go-only" | grep -q 'no module fixes' || fail "Go's own fix"
+[ -z "$(calls POST /git/commits)" ] || fail "vuln-fix tried to fix Go"
+calls PATCH 'pulls/21$' | jq -e '.body.state == "closed"' >/dev/null || fail "a fix PR with nothing left to fix stayed open"
+released example.com/vulnlib v1.0.2-rc.1 30
+echo 'fix available: GO-2099-0004 in example.com/vulnlib@v1.0.0, fixed in v1.0.2-rc.1 (example.com/vfork)' >"${t}/odd"
+state '{"pulls": []}'
+reset_log
+expect_fail "${hack}/vuln-fix.sh" vfork rhtas/main "${t}/odd"
+grep -q 'not vX.Y.Z: it needs a maintainer' "${t}/out" || fail "a fix the sync cannot regenerate not reported"
+[ -z "$(calls POST /git/commits)" ] || fail "committed a fix the sync cannot regenerate"
+ok "vuln-fix leaves Go to a person, closes fix PRs with nothing left to fix, and fails on fixes a sync cannot regenerate"
+
+git -C "${op}" rm -q operator.go
+vulnerable "${op}" example.com/operator
+git -C "${op}" add -A
+git -C "${op}" commit -q -m vulnerable
+git -C "${op}" push -q "${t}/origin/secure-sign-pqc-operator.git" main
+git clone -q "${t}/origin/secure-sign-pqc-operator.git" "${t}/op-scan"
+"${hack}/vulncheck.sh" "${t}/op-scan" >"${t}/op-summary"
+state '{"pulls": []}'
+reset_log
+"${hack}/vuln-fix.sh" secure-sign-pqc-operator main "${t}/op-summary" >/dev/null
+calls POST /git/commits | jq -e '.body.message == "Fix GO-2099-0001"' >/dev/null || fail "the operator's fix is no carry"
+calls POST 'operator/pulls$' | jq -e '.body.base == "main"' >/dev/null || fail "the operator's fix PR"
+ok "vuln-fix fixes the operator with a plain commit"
+
+# bump-pr refuses a commit that reaches a vulnerability with a fix.
+git -C "${tsa}" rm -q tsa.go
+vulnerable "${tsa}" example.com/tsa
+git -C "${tsa}" add -A
+git -C "${tsa}" commit -q -m vulnerable
+git -C "${tsa}" push -q "${t}/origin/timestamp-authority.git" rhtas/main
+bad="$(git -C "${tsa}" rev-parse HEAD)"
+crane append --insecure -f "${t}/layer.tar" -t "${registry}/sealhouse/tsa:rhtas-main-${bad:0:12}" >/dev/null 2>&1
+state "$(jq -n --arg f "${file}" '{files: {($f): "TSA_IMAGE=old\n"}, pulls: []}')"
+reset_log
+expect_fail "${hack}/bump-pr.sh" timestamp-authority "${bad}" "${registry}/sealhouse/tsa@$(crane digest --insecure "${registry}/sealhouse/tsa:rhtas-main-${bad:0:12}")" rhtas/main
+grep -q '^fix available: GO-2099-0001' "${t}/out" || fail "the bump refusal does not name the finding"
+grep -q 'there is no bump until they are fixed' "${t}/out" || fail "the bump refusal"
+[ -z "$(calls POST /git/commits)" ] || fail "bumped to a vulnerable image"
+ok "bump-pr refuses an image whose commit reaches a vulnerability with a fix"
+
+# watch-go: the builder's Go against tools.lock's, and fixes only a newer Go has.
+read -r scan_go _ < <(sed -n 's/^GO=//p' "${root}/tools.lock")
+newer="$(awk -F. '{ printf "%s.%s.%d", $1, $2, $3 + 1 }' <<<"${scan_go}")"
+released golang.org/toolchain "v0.0.1-go${newer}.linux-amd64" 30
+# builder GO TAG pushes a builder image and prints it as images.lock pins one.
+builder() {
+  local ref
+  ref="$(crane mutate --insecure --env "GOLANG_VERSION=$1" -t "${registry}/hi/go:$2" "${registry}/sealhouse/tsa:rhtas-main-${commit:0:12}" 2>/dev/null)"
+  echo "${registry}/hi/go:$2@${ref#*@}"
+}
+pinned="$(builder "${scan_go}" 1.27-fips-builder)"
+: >"${t}/none"
+GO_BUILDER="${pinned}" "${hack}/watch-go.sh" "${t}/none" >/dev/null || fail "watch-go failed with nothing to fix"
+GO_BUILDER="$(builder "${newer}" other)" expect_fail "${hack}/watch-go.sh" "${t}/none"
+grep -q "builds with Go ${newer}, tools.lock scans with Go ${scan_go}" "${t}/out" || fail "a builder off tools.lock's Go not reported"
+printf '%s\n' "app: fix available: GO-2099-0002 in stdlib@v${scan_go}, fixed in v${newer} (example.com/app)" \
+  "other: fix available: GO-2099-0002 in stdlib@v${scan_go}, fixed in v${newer} (example.com/other)" >"${t}/go-fix"
+GO_BUILDER="${pinned}" expect_fail "${hack}/watch-go.sh" "${t}/go-fix"
+grep -q "Go ${newer} fixes vulnerabilities" "${t}/out" && grep -q "GO-2099-0002 (Go ${newer}): app other" "${t}/out" || fail "the Go fix not reported"
+grep -q "1.27-fips-builder still has Go ${scan_go}" "${t}/out" || fail "the builder tag without the fix not reported"
+floating="$(builder "${newer}" 1.27-fips-builder)"
+GO_BUILDER="${pinned}" expect_fail "${hack}/watch-go.sh" "${t}/go-fix"
+grep -q "1.27-fips-builder has Go ${newer}: pin it as ${floating#*@}" "${t}/out" || fail "the builder with the fix not offered"
+ok "watch-go fails on a fix only a newer Go has, names the builder that has it, and on a builder off tools.lock's Go"
+
+# vuln-due: a fix waits vulns.lock's DAYS from its release, unless vulns.lock names it.
+released example.com/young v1.0.1 2
+released golang.org/toolchain v0.0.1-go1.99.1.linux-amd64 2
+cat >"${t}/due-summary" <<SUMMARY
+govulncheck says
+fix available: GO-2099-0001 in example.com/vulnlib@v1.0.0, fixed in v1.0.1 (example.com/vfork)
+fix available: GO-2099-0005 in example.com/young@v1.0.0, fixed in v1.0.1 (example.com/vfork)
+app: fix available: GO-2099-0006 in stdlib@v1.99.0, fixed in v1.99.1 (example.com/app)
+no fix yet: GO-2099-0003 in example.com/other@v1.0.0 (example.com/vfork)
+SUMMARY
+export SEALHOUSE_VULNS="${t}/vulns.lock"
+printf '# test\nDAYS=7\n' >"${SEALHOUSE_VULNS}"
+"${hack}/vuln-due.sh" "${t}/due-summary" >"${t}/due" 2>"${t}/due.err"
+[ "$(cat "${t}/due")" = 'fix available: GO-2099-0001 in example.com/vulnlib@v1.0.0, fixed in v1.0.1 (example.com/vfork)' ] || fail "vuln-due took: $(cat "${t}/due")"
+grep -q "^GO-2099-0005: example.com/young v1.0.1 was released $(date -u -d '2 days ago' +%F), ci takes it from $(date -u -d '5 days' +%F)$" "${t}/due.err" ||
+  fail "the young fix's wait: $(cat "${t}/due.err")"
+grep -q '^GO-2099-0006: stdlib v1.99.1 was released' "${t}/due.err" || fail "a young Go waits from the Go release"
+printf 'DAYS=1\n' >"${SEALHOUSE_VULNS}"
+[ "$("${hack}/vuln-due.sh" "${t}/due-summary" 2>/dev/null | wc -l)" -eq 3 ] || fail "DAYS=1 did not take the two-day-old fixes"
+printf 'DAYS=7\nGO-2099-0005 exploited\nGO-2099-0001 long fixed\n' >"${SEALHOUSE_VULNS}"
+"${hack}/vuln-due.sh" "${t}/due-summary" >"${t}/due" 2>"${t}/due.err"
+grep -q GO-2099-0005 "${t}/due" || fail "vulns.lock did not take a named fix early"
+grep -q '^GO-2099-0001: its fix is over 7 days old, so its line in vulns.lock can go$' "${t}/due.err" || fail "an outdated vulns.lock line not reported"
+"${hack}/vuln-due.sh" --rows T app "${t}/due-summary" >"${t}/rows" 2>/dev/null
+printf 'T\tapp\t%s\n' $'GO-2099-0001\texample.com/vulnlib\tv1.0.0\tv1.0.1\t2026-01-01' \
+  "GO-2099-0005"$'\texample.com/young\tv1.0.0\tv1.0.1\t'"$(date -u -d '2 days ago' +%F)" \
+  "GO-2099-0006"$'\tstdlib\tv1.99.0\tv1.99.1\t'"$(date -u -d '5 days' +%F)" $'GO-2099-0003\texample.com/other\tv1.0.0\t\t' |
+  cmp - "${t}/rows" || fail "vuln-due rows: $(cat "${t}/rows")"
+echo 'govulncheck: no reachable vulnerabilities' >"${t}/clean"
+[ "$("${hack}/vuln-due.sh" --rows T sigstore "${t}/clean")" = "$(printf 'T\tsigstore\t\t\t\t\t')" ] || fail "clean row"
+: >"${t}/garbled"
+expect_fail "${hack}/vuln-due.sh" --rows T sigstore "${t}/garbled"
+printf 'DAYS=soon\n' >"${SEALHOUSE_VULNS}"
+expect_fail "${hack}/vuln-due.sh" "${t}/due-summary"
+printf 'DAYS=7\n' >"${SEALHOUSE_VULNS}"
+echo 'fix available: GO-2099-0007 in example.com/unknown@v1.0.0, fixed in v1.0.1 (example.com/vfork)' >"${t}/unknown"
+expect_fail "${hack}/vuln-due.sh" "${t}/unknown"
+grep -q 'no release time\|example.com/unknown' "${t}/out" || fail "a fix with no release time not reported"
+ok "vuln-due holds a fix DAYS from its release, Go's from the Go release, takes what vulns.lock names, and fails on what it cannot date; its trend rows date each fix, give a clean repo one empty row, and refuse an unreadable summary"
+
+grep young "${t}/due-summary" >"${t}/young"
+state '{"pulls": []}'
+reset_log
+"${hack}/vuln-fix.sh" vfork rhtas/main "${t}/young" 2>"${t}/young.err" | grep -q 'no module fixes' || fail "vuln-fix took a fix still baking"
+[ -z "$(calls POST /git/commits)" ] || fail "committed a fix still baking"
+grep -q 'ci takes it from' "${t}/young.err" || fail "vuln-fix does not say when it takes the fix"
+printf 'DAYS=100000\n' >"${SEALHOUSE_VULNS}"
+state "$(jq -n --arg f "${file}" '{files: {($f): "TSA_IMAGE=old\n"}, pulls: []}')"
+reset_log
+"${hack}/bump-pr.sh" timestamp-authority "${bad}" "${registry}/sealhouse/tsa@$(crane digest --insecure "${registry}/sealhouse/tsa:rhtas-main-${bad:0:12}")" rhtas/main >/dev/null 2>&1 ||
+  fail "bump-pr refused a vulnerability whose fix is still baking"
+calls POST 'operator/pulls$' | grep -q . || fail "no bump while the fix bakes"
+GO_BUILDER="${pinned}" "${hack}/watch-go.sh" "${t}/go-fix" >/dev/null 2>&1 || fail "watch-go failed on a Go fix still baking"
+printf 'DAYS=7\n' >"${SEALHOUSE_VULNS}"
+ok "vuln-fix, bump-pr and watch-go all wait out a fix that is still baking"
 
 echo "test-github: all passed"

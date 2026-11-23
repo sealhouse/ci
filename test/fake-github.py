@@ -116,6 +116,8 @@ class H(BaseHTTPRequestHandler):
             return self.reply(200, {"check_runs": state.get("checks_by_sha", {}).get(rest.split("/")[2], state["checks"])})
         if method == "POST" and rest.endswith("/requested_reviewers") and state.get("reviews_refused"):
             return self.reply(422, {"message": "Reviews may only be requested from collaborators."})
+        if method == "GET" and re.match(r"/pulls/\d+$", rest):
+            return self.reply(200, state.get("pr_details", {}).get(rest.split("/")[2], {}))
         pr = re.match(r"/pulls/(\d+)/(commits|files|merge)$", rest)
         if pr and method == "GET":
             return self.reply(200, state.get("pr_" + pr.group(2), {}).get(pr.group(1), []))
