@@ -399,6 +399,8 @@ calls PATCH 'ci/git/refs/heads/vuln-trend$' | jq -e '.body.force == false' >/dev
 ok "soak-record and trend-record make their branch when absent and commit the trend"
 
 # Library releases, on real repos and a file proxy.
+# semver's dependency, which the scratch proxy does not serve.
+GOMODCACHE="${t}/modcache" go -C "${root}/tools/semver" mod download
 export GOPROXY="file://${t}/proxy" GONOPROXY=none GOSUMDB=off GOFLAGS= GOWORK=off GOMODCACHE="${t}/modcache" GOTOOLCHAIN=local
 publish() {
   local served="$1" ver="$2" mod="$3" dir="${t}/proxy/$1/@v" src="${t}/src/$1@$2"
@@ -521,6 +523,13 @@ git init -q -b rhtas/main "${vfork}"
 vulnerable "${vfork}" example.com/vfork
 vulnerable "${vfork}/cmd" example.com/vfork/cmd
 vulnerable "${vfork}/cmd/testdata/x" example.com/vfork/cmd/testdata
+# tools/bundle requires the root through a replace and imports vulnlib through it without reaching Bad, as the operator's does.
+mkdir -p "${vfork}/lib" "${vfork}/tools/bundle"
+printf 'package lib\n\nimport _ "example.com/vulnlib"\n' >"${vfork}/lib/lib.go"
+printf 'module example.com/vfork/tools/bundle\n\ngo %s\n\nrequire example.com/vfork v0.0.0\n\nreplace example.com/vfork => ../..\n' "${gover}" >"${vfork}/tools/bundle/go.mod"
+printf 'package main\n\nimport _ "example.com/vfork/lib"\n\nfunc main() {}\n' >"${vfork}/tools/bundle/main.go"
+go -C "${vfork}/tools/bundle" mod tidy 2>/dev/null
+grep -q 'example.com/vulnlib v1.0.0 // indirect' "${vfork}/tools/bundle/go.mod" || fail "the nested module does not require vulnlib"
 repo_from "${vfork}" vfork "UPSTREAM: <carry>: vfork"
 git clone -q -b rhtas/main "${t}/origin/vfork.git" "${t}/vfork-scan"
 "${hack}/vulncheck.sh" "${t}/vfork-scan" >"${t}/vfork-summary"
@@ -529,21 +538,22 @@ git clone -q -b rhtas/main "${t}/origin/vfork.git" "${t}/vfork-scan"
 echo 'fix available: GO-2099-0002 in stdlib@v1.27.3, fixed in v1.27.4 (example.com/vfork)' >>"${t}/vfork-summary"
 echo 'no fix yet: GO-2099-0003 in example.com/other@v1.0.0 (example.com/vfork)' >>"${t}/vfork-summary"
 
-gets=$'. example.com/vulnlib@v1.0.1\ncmd example.com/vulnlib@v1.0.1'
+gets=$'tools/bundle example.com/vulnlib@v1.0.1\ncmd example.com/vulnlib@v1.0.1\n. example.com/vulnlib@v1.0.1'
 name="vulns/$(sha256sum <<<"${gets}" | cut -c1-12)"
 vpr() { printf '{"number": %s, "node_id": "PR_%s", "base": {"ref": "%s"}, "head": {"ref": "%s", "sha": "s"}}' "$1" "$1" "$2" "$3"; }
 state "{\"pulls\": [$(vpr 21 rhtas/main vulns/oldoldoldold), $(vpr 22 rhtas/main replaces/keep)], \"pr_details\": {}}"
 reset_log
 "${hack}/vuln-fix.sh" vfork rhtas/main "${t}/vfork-summary" >"${t}/out" 2>&1 || { cat "${t}/out"; fail "vuln-fix"; }
 message="$(calls POST /git/commits | jq -r .body.message)"
-[ "${message}" = $'UPSTREAM: <drop>: Fix GO-2099-0001\n\nGo-Get: . example.com/vulnlib@v1.0.1\nGo-Get: cmd example.com/vulnlib@v1.0.1' ] ||
+[ "${message}" = $'UPSTREAM: <drop>: Fix GO-2099-0001\n\nGo-Get: tools/bundle example.com/vulnlib@v1.0.1\nGo-Get: cmd example.com/vulnlib@v1.0.1\nGo-Get: . example.com/vulnlib@v1.0.1' ] ||
   fail "the carry's message: ${message}"
 [ "$(calls POST /git/commits | wc -l)" -eq 1 ] || fail "one commit for every module fix"
-calls POST /git/trees | jq -e '[.body.tree[].path] | sort == ["cmd/go.mod", "cmd/go.sum", "go.mod", "go.sum"]' >/dev/null || fail "the fix changes go.mod and go.sum in both modules"
-[ "$(calls POST /git/blobs | jq -r .body.content | grep -c 'example.com/vulnlib v1.0.1$')" -eq 2 ] || fail "go.mod does not require the fixed version"
+calls POST /git/trees | jq -e '[.body.tree[].path] | sort == ["cmd/go.mod", "cmd/go.sum", "go.mod", "go.sum", "tools/bundle/go.mod", "tools/bundle/go.sum"]' >/dev/null ||
+  fail "the fix changes go.mod and go.sum in every module: $(calls POST /git/trees | jq -c '[.body.tree[].path]')"
+[ "$(calls POST /git/blobs | jq -r .body.content | grep -c 'example.com/vulnlib v1.0.1\( // indirect\)\?$')" -eq 3 ] || fail "go.mod does not require the fixed version"
 calls POST 'vfork/git/refs$' | jq -e --arg r "refs/heads/${name}" '.body.ref == $r' >/dev/null || fail "the branch"
 calls POST 'vfork/pulls$' | jq -e --arg n "${name}" '.body.base == "rhtas/main" and .body.head == $n and .body.title == "UPSTREAM: <drop>: Fix GO-2099-0001"' >/dev/null || fail "the PR"
-calls POST /graphql | jq -e '.body.query | test("commitBody: \"Go-Get: . example.com/vulnlib@v1.0.1\\\\nGo-Get: cmd example.com/vulnlib@v1.0.1\"")' >/dev/null ||
+calls POST /graphql | jq -e '.body.query | test("commitBody: \"Go-Get: tools/bundle example.com/vulnlib@v1.0.1\\\\nGo-Get: cmd example.com/vulnlib@v1.0.1\\\\nGo-Get: . example.com/vulnlib@v1.0.1\"")' >/dev/null ||
   fail "the squash must keep the trailers"
 calls PATCH 'pulls/21$' | jq -e '.body.state == "closed"' >/dev/null || fail "stale vulns PR left open"
 calls DELETE 'vulns/oldoldoldold$' | grep -q . || fail "stale vulns branch left"
@@ -552,7 +562,7 @@ calls DELETE 'vulns/oldoldoldold$' | grep -q . || fail "stale vulns branch left"
 # The commit, made for real: the sync reads its trailers, and nothing reachable is left.
 scan="${t}/vfork-scan"
 base="$(git -C "${scan}" rev-parse HEAD)"
-for path in go.mod go.sum cmd/go.mod cmd/go.sum; do
+for path in go.mod go.sum cmd/go.mod cmd/go.sum tools/bundle/go.mod tools/bundle/go.sum; do
   i="$(calls POST /git/trees | jq -r --arg p "${path}" '.body.tree | map(.path) | index($p)')"
   calls POST /git/blobs | jq -rs --argjson i "${i}" '.[$i].body.content' >"${scan}/${path}"
 done
@@ -561,7 +571,8 @@ git -C "${scan}" add -A
 git -C "${scan}" commit -q -F "${t}/message"
 "${hack}/fork-sync.sh" --check --since "${base}" "${scan}" >/dev/null || fail "the sync refuses the carry"
 "${hack}/vulncheck.sh" "${scan}" | grep -qx 'govulncheck: no reachable vulnerabilities' || fail "the fix left Bad reachable"
-ok "vuln-fix opens one <drop> carry PR with Go-Get trailers that clears the findings, leaving Go to a person"
+go -C "${scan}/tools/bundle" build -o /dev/null . || fail "the nested module does not build after the fix"
+ok "vuln-fix opens one <drop> carry PR with Go-Get trailers, nested modules first, that clears the findings and leaves every module tidy, leaving Go to a person"
 
 state "{\"pulls\": [$(vpr 30 rhtas/main "${name}")], \"pr_details\": {\"30\": {\"mergeable\": true}}, \"checks\": ${running}}"
 reset_log
