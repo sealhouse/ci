@@ -42,7 +42,7 @@ mkdir -p "${j}"
 in_day='def in_day: . != null and . >= $from and . < $to;'
 nz='def nz: if . == "" then null else . end;'
 kind='def kind: if . == "rhtas/sync" then "sync" elif startswith("bump/") then "bump" elif startswith("ci-pin/") then "ci-pin"
-  elif startswith("replaces/") then "replaces" else "other" end;'
+  elif startswith("replaces/") then "replaces" elif startswith("vulns/") then "vulns" else "other" end;'
 utc() { jq -rn --argjson s "$1" '$s | todate'; }
 # upstream_of DIR COMMIT prints the newest upstream commit COMMIT contains.
 upstream_of() { git -C "$1" merge-base "$2" refs/upstream/head 2>/dev/null || true; }

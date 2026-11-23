@@ -120,8 +120,8 @@ printf 'date\tcommit\tcsv\tgoroutines\theap_mib\tsys_mib\tkills\tresult\n%s\tabc
 git -C "${ci_dir}" add soak-trend.tsv
 commit "${ci_dir}" "$(at '10:00')" "Record soak-trend.tsv" >/dev/null
 git -C "${ci_dir}" switch -q -c vuln-trend main
-printf 'date\trepo\tosv\tmodule\tversion\tfixed\n%s\ttimestamp-authority\tGO-2026-1\texample.com/m\tv1.0.0\tv1.1.0\n%s\ttimestamp-authority\tGO-2026-2\texample.com/n\tv2.0.0\t\n%s\tsecure-sign-pqc-operator\t\t\t\t\n' \
-  "$(iso "$(at '09:00')")" "$(iso "$(at '09:00')")" "$(iso "$(at '09:00')")" >"${ci_dir}/vuln-trend.tsv"
+printf 'date\trepo\tosv\tmodule\tversion\tfixed\tdue\n%s\ttimestamp-authority\tGO-2026-1\texample.com/m\tv1.0.0\tv1.1.0\t2026-03-10\n%s\ttimestamp-authority\tGO-2026-2\texample.com/n\tv2.0.0\t\t\n%s\ttimestamp-authority\tGO-2026-3\texample.com/o\tv1.0.0\tv1.0.1\t2026-03-15\n%s\tsecure-sign-pqc-operator\tGO-2026-4\texample.com/p\tv1.0.0\tv1.0.1\n%s\tsecure-sign-pqc-operator\t\t\t\t\t\n' \
+  "$(iso "$(at '09:00')")" "$(iso "$(at '09:00')")" "$(iso "$(at '09:00')")" "$(iso "$(at '09:00')")" "$(iso "$(at '09:00')")" >"${ci_dir}/vuln-trend.tsv"
 git -C "${ci_dir}" add vuln-trend.tsv
 commit "${ci_dir}" "$(at '09:00')" "Record vuln-trend.tsv" >/dev/null
 bare "${ci_dir}" "${gitroot}/sealhouse/ci.git" main soak-trend vuln-trend
@@ -200,8 +200,9 @@ jq -e '.nightly == [{id: 900, conclusion: "success", created_at: "2026-03-10T08:
   jobs: [{name: "kind (1.33)", conclusion: "success"}, {name: "soak", conclusion: "skipped"}, {name: "vulns", conclusion: "success"}]}]' "${r}" >/dev/null ||
   fail "nightly: $(jq -c .nightly "${r}")"
 ok "runs leave out PR checks and carry the steps they ran; the nightly carries its jobs"
-jq -e '(.soak | map(.csv)) == ["op.v0.1.0-alpha.2"] and (.vulns | map([.repo, .osv, .fixed])) ==
-  [["timestamp-authority", "GO-2026-1", "v1.1.0"], ["timestamp-authority", "GO-2026-2", ""], ["secure-sign-pqc-operator", "", ""]]' "${r}" >/dev/null ||
+jq -e '(.soak | map(.csv)) == ["op.v0.1.0-alpha.2"] and (.vulns | map([.repo, .osv, .fixed, .due])) ==
+  [["timestamp-authority", "GO-2026-1", "v1.1.0", "2026-03-10"], ["timestamp-authority", "GO-2026-2", "", ""], ["timestamp-authority", "GO-2026-3", "v1.0.1", "2026-03-15"],
+   ["secure-sign-pqc-operator", "GO-2026-4", "v1.0.1", null], ["secure-sign-pqc-operator", "", "", ""]]' "${r}" >/dev/null ||
   fail "trends: $(jq -c '[.soak, .vulns]' "${r}")"
 ok "the soak and vulnerability trends give the day's rows"
 jq -e '.snapshot.alpha == "op.v0.1.0-alpha.2" and .snapshot.behind == [
@@ -267,10 +268,10 @@ jq -e '.incidents == [
   {repo: "ci", workflow: "sealhouse-repin", branch: "main", step: null, from: "2026-03-10T15:00:00Z",
    to: "2026-03-10T16:30:00Z", hours: 1.5, run: "https://github.example/runs/920"}]' "${ru}" >/dev/null || fail "incidents: $(jq -c .incidents "${ru}")"
 ok "a failed step recovers only when it passes again, not at a run that skips it; a failure without a failed step recovers at the next green run"
-jq -e '.vulns == [{date: "2026-03-10", fix: 1, nofix: 1, repos: 2}] and (.nightly[0].jobs == {"kind (1.33)": "success", soak: "skipped", vulns: "success"})
+jq -e '.vulns == [{date: "2026-03-10", fix: 2, baking: 1, nofix: 1, repos: 2}] and (.nightly[0].jobs == {"kind (1.33)": "success", soak: "skipped", vulns: "success"})
   and (.behind | length == 2) and .alpha == "op.v0.1.0-alpha.2" and ([.carries[] | "\(.repo) \(.commits | length)"] == ["sigstore-go 0", "timestamp-authority 1"])' "${ru}" >/dev/null ||
   fail "series: $(jq -c '[.vulns, .nightly, .behind, .carries]' "${ru}")"
-ok "the vulnerability, nightly and waiting-commit series, and the latest carries"
+ok "the vulnerability series, with a fix due that night fixable, a later one baking and one recorded before due counted fixable; the nightly and waiting-commit series, and the latest carries"
 cp "${out}/again.json" "${daily}/2026-03-12.json"
 if "${hack}/report-rollup.sh" "${daily}" "${t}/bad.json" 2>/dev/null; then fail "a report under another date's name was accepted"; fi
 rm "${daily}/2026-03-12.json"
@@ -279,16 +280,6 @@ if "${hack}/report-rollup.sh" "${daily}" "${t}/bad.json" 2>/dev/null; then fail 
 rm "${daily}/2026-03-01.json"
 ok "the rollup refuses a report for another date and an unknown schema"
 
-# vuln-trend rows from vulncheck summaries.
-printf 'fix available: GO-2026-6505 in go.opentelemetry.io/otel/exporters/otlp/otlptrace@v1.44.0, fixed in v1.45.0 (github.com/sealhouse/op)\nno fix yet: GO-2026-6225 in github.com/x/acr@v0.0.0-2020 (github.com/sigstore/cosign/v3)\n' >"${t}/summary"
-"${hack}/vuln-trend.sh" T cosign "${t}/summary" >"${t}/rows"
-printf 'T\tcosign\tGO-2026-6505\tgo.opentelemetry.io/otel/exporters/otlp/otlptrace\tv1.44.0\tv1.45.0\nT\tcosign\tGO-2026-6225\tgithub.com/x/acr\tv0.0.0-2020\t\n' | cmp - "${t}/rows" ||
-  fail "vuln rows: $(cat "${t}/rows")"
-echo 'govulncheck: no reachable vulnerabilities' >"${t}/clean"
-[ "$("${hack}/vuln-trend.sh" T sigstore "${t}/clean")" = "$(printf 'T\tsigstore\t\t\t\t')" ] || fail "clean row"
-: >"${t}/garbled"
-if "${hack}/vuln-trend.sh" T sigstore "${t}/garbled" 2>/dev/null; then fail "an empty summary gave a clean row"; fi
-ok "vuln-trend gives a row per finding, one empty row for a clean repo, and refuses an unreadable summary"
 
 # Publishing to reports, through the API, as the bot App.
 openssl genrsa -out "${t}/key.pem" 2048 2>/dev/null

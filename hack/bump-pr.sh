@@ -44,6 +44,17 @@ if grep -qx "${key}=${image}" "${work}/images.env"; then
   echo "operator ${file} already pins ${image}"
   exit 0
 fi
+# A vulnerability with a fix vulns.lock lets ci take stops the bump until a vulns PR or a Go update takes it.
+tree="${work}/${fork}"
+git clone -q --filter=blob:none "${SEALHOUSE_GIT_BASE:-https://github.com/${gh_org}}/${fork}.git" "${tree}"
+git -C "${tree}" checkout -q --detach "${commit}"
+"${root}/hack/vulncheck.sh" "${tree}" >"${work}/vulns"
+"${root}/hack/vuln-due.sh" "${work}/vulns" >"${work}/due"
+if [ -s "${work}/due" ]; then
+  cat "${work}/due" >&2
+  echo "${fork} ${branch} ${short} reaches vulnerabilities that have fixes: there is no bump until they are fixed" >&2
+  exit 1
+fi
 sed -i "s#^${key}=.*#${key}=${image}#" "${work}/images.env"
 
 slug="$(printf '%s' "${key}" | tr 'A-Z_' 'a-z-')"

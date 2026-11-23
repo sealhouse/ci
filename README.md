@@ -62,6 +62,24 @@ flowchart LR
   class invpr,reppr pr
 ```
 
+### A vulnerability with a fix
+
+```mermaid
+flowchart LR
+  scan["sealhouse-nightly<br/>govulncheck, every repo"] -->|"a module's fix<br/>vuln-fix.sh"| vpr(["vulns PRs<br/>forks and operator"])
+  vpr -->|"sealhouse-bump-update: bot-merge.sh<br/>green, bot-signed, go.mod and go.sum only"| fixed["fork rhtas/main<br/>operator main"]
+  scan -->|"Go's fix<br/>watch-go.sh fails"| gobump{{"maintainer updates Go<br/>tools.lock and HI_GO_BUILDER"}}
+
+  classDef gate fill:#fde2e1,stroke:#c0392b,color:#000
+  classDef pr fill:#e8f0fe,stroke:#1a73e8,color:#000
+  class gobump gate
+  class vpr pr
+```
+
+A fork's fix is a `<drop>` carry with `Go-Get` trailers, which each sync redoes until upstream has the fix. `sealhouse-bump` opens no bump for an image whose commit reaches a vulnerability with a fix.
+
+A fix bakes first: ci takes it once its release, or for Go's own fixes the Go release, is `DAYS` old in `vulns.lock`, 7 by default. Until then the PR, the Go watch and the bump gate all wait. A vulnerability `vulns.lock` names is taken as soon as its fix is out.
+
 ## Workflows
 
 | Workflow | Trigger | Acts as |
@@ -69,10 +87,10 @@ flowchart LR
 | `sealhouse-sync` | 06:17 starts syncs; a sync PR's lane, and every six hours, finish green ones | sealhouse-sync |
 | `sealhouse-repin` | push to `main` | sealhouse-bot |
 | `sealhouse-bump` | a fork's merge lane | sealhouse-bot |
-| `sealhouse-bump-update` | a ci-pin, replaces or bump PR's lane; a sync fast-forward; the operator's merge lane; every six hours | sealhouse-bot |
+| `sealhouse-bump-update` | a ci-pin, replaces, vulns or bump PR's lane; a sync fast-forward; the operator's merge lane; every six hours | sealhouse-bot |
 | `sealhouse-catalog` | the operator's merge lane | sealhouse-bot |
 | `sealhouse-replaces` | 07:23; `replaces.lock` push; dispatch | sealhouse-sync tags, sealhouse-bot opens PRs |
-| `sealhouse-nightly` | 08:40; the e2e, soak and rebuilds only when their inputs changed or weekly | the job token |
+| `sealhouse-nightly` | 08:40; the e2e, soak and rebuilds only when their inputs changed or weekly | the job token; sealhouse-bot opens vulns PRs |
 | `pr.yaml`, `merge.yaml`, `sync-merge-guard.yaml` | called from each repo's `sealhouse-*.yaml`, pinned to one ci commit | the caller; lanes hand off through sealhouse-dispatch |
 
 `hack/status.sh` prints what waits on a maintainer, the active runs and the open PRs across the org.

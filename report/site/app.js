@@ -317,14 +317,15 @@ function behind() {
 
 function vulns() {
   const v = rollup.vulns;
-  legend($("vulns-legend"), [["Fix available", "--s1"], ["No fix yet", "--s2"]]);
+  legend($("vulns-legend"), [["Fixable", "--s1"], ["Fix baking", "--s2"], ["No fix yet", "--s3"]]);
   if (!v.length) {
     empty($("vulns"), "Appears after the first nightly that records its scan results.");
     table($("vulns-table"), [], []);
     return;
   }
-  draw($("vulns"), base("line", v.map((x) => x.date.slice(5)), [lines("Fix available", v.map((x) => x.fix), "--s1"), lines("No fix yet", v.map((x) => x.nofix), "--s2")]));
-  table($("vulns-table"), ["Night", "Fix available", "No fix yet", "Repositories scanned"], v.map((x) => [x.date, x.fix, x.nofix, x.repos]), [1, 2, 3]);
+  draw($("vulns"), base("line", v.map((x) => x.date.slice(5)), [lines("Fixable", v.map((x) => x.fix), "--s1"),
+    lines("Fix baking", v.map((x) => x.baking), "--s2"), lines("No fix yet", v.map((x) => x.nofix), "--s3")]));
+  table($("vulns-table"), ["Night", "Fixable", "Fix baking", "No fix yet", "Repositories scanned"], v.map((x) => [x.date, x.fix, x.baking, x.nofix, x.repos]), [1, 2, 3, 4]);
 }
 
 function soak() {

@@ -66,8 +66,10 @@ jq -s '
     nightly: [$ok[] | .date as $d | .nightly[] | {date: $d, conclusion, url,
       jobs: (.jobs | map({key: .name, value: .conclusion}) | from_entries)}],
     soak: [$ok[].soak[]],
+    # A fix bakes until its due day; rows from before due was recorded count as taken.
     vulns: [$ok[] | select(.vulns | length > 0) | {date,
-      fix: ([.vulns[] | select(.osv != "" and .fixed != "")] | unique_by([.repo, .osv]) | length),
+      fix: ([.vulns[] | select(.osv != "" and .fixed != "" and (.due // "") <= .date[:10])] | unique_by([.repo, .osv]) | length),
+      baking: ([.vulns[] | select(.osv != "" and .fixed != "" and (.due // "") > .date[:10])] | unique_by([.repo, .osv]) | length),
       nofix: ([.vulns[] | select(.osv != "" and .fixed == "")] | unique_by([.repo, .osv]) | length),
       repos: ([.vulns[].repo] | unique | length)}],
     behind: [[$ok[].snapshot] | group_by(.at[:10])[] | max_by(.at) as $s | $s.behind[] | {date: $s.at[:10], repo, behind,

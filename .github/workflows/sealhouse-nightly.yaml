@@ -1,5 +1,5 @@
 # The alpha head on every cluster, the soak, vulnerability scans and rebuilds.
-# The scans and the MicroShift watch run every night; the rest only when their inputs changed
+# The scans and the MicroShift and Go watches run every night; the rest only when their inputs changed
 # since their last green run, or that run is a week old. A dispatch runs everything.
 name: sealhouse-nightly
 
@@ -52,6 +52,8 @@ jobs:
           echo "next=$(base64 -w0 next)" >>"${GITHUB_OUTPUT}"
 
   watch:
+    needs: vulns
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -64,6 +66,14 @@ jobs:
         run: ci/hack/tools.sh
       - name: MicroShift
         run: ci/hack/watch-microshift.sh
+      # Go is updated by hand; module fixes go through the vulns job's PRs.
+      - name: Go
+        if: ${{ !cancelled() }}
+        env:
+          FINDINGS: ${{ needs.vulns.outputs.go }}
+        run: |
+          base64 -d <<<"${FINDINGS}" >go-findings
+          ci/hack/watch-go.sh go-findings
 
   kind:
     needs: changes
@@ -189,6 +199,8 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: write
+    outputs:
+      go: ${{ steps.scan.outputs.go }}
     steps:
       - name: Scripts
         run: |
@@ -198,20 +210,26 @@ jobs:
       - name: Toolchain
         run: ci/hack/tools.sh
       - name: Scan
+        id: scan
         run: |
           failed=0
           now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          printf 'date\trepo\tosv\tmodule\tversion\tfixed\n' >vuln-rows.tsv
+          printf 'date\trepo\tosv\tmodule\tversion\tfixed\tdue\n' >vuln-rows.tsv
+          { awk '!/^#/ { print $1, "rhtas/main" }' ci/forks.lock; echo secure-sign-pqc-operator main; } >repos
           while read -r repo ref; do
             echo "== ${repo}"
             git clone -q --depth 1 -b "${ref}" "https://github.com/sealhouse/${repo}.git" "tree-${repo}"
             if ci/hack/vulncheck.sh "tree-${repo}" "out/${repo}"; then
               grep -E '^(fix available|no fix yet)' "out/${repo}/summary" >>"${GITHUB_STEP_SUMMARY}" || true
-              ci/hack/vuln-trend.sh "${now}" "${repo}" "out/${repo}/summary" >>vuln-rows.tsv || failed=1
+              ci/hack/vuln-due.sh --rows "${now}" "${repo}" "out/${repo}/summary" >>vuln-rows.tsv || failed=1
             else
               failed=1
             fi
-          done < <(awk '!/^#/ { print $1, "rhtas/main" }' ci/forks.lock; echo secure-sign-pqc-operator main)
+          done <repos
+          for summary in out/*/summary; do
+            [ -f "${summary}" ] && sed "s#^#$(basename "$(dirname "${summary}")"): #" "${summary}"
+          done | grep -E '^[^:]+: fix available: [^ ]+ in (stdlib|toolchain)@' >go-findings || true
+          echo "go=$(base64 -w0 go-findings)" >>"${GITHUB_OUTPUT}"
           exit "${failed}"
       - name: Record
         if: ${{ !cancelled() }}
@@ -220,12 +238,25 @@ jobs:
         run: |
           [ "$(wc -l <vuln-rows.tsv)" -gt 1 ] || exit 0
           if git -C ci fetch -q origin vuln-trend; then
-            git -C ci show FETCH_HEAD:vuln-trend.tsv >vuln-trend.tsv
+            # Rows from before the due column read as taken at once.
+            { head -1 vuln-rows.tsv; git -C ci show FETCH_HEAD:vuln-trend.tsv | tail -n +2; } >vuln-trend.tsv
             tail -n +2 vuln-rows.tsv >>vuln-trend.tsv
           else
             cp vuln-rows.tsv vuln-trend.tsv
           fi
           ci/hack/trend-record.sh vuln-trend vuln-trend.tsv
+      - name: Fix
+        if: ${{ !cancelled() }}
+        env:
+          BOT_APP_ID: ${{ secrets.SEALHOUSE_BOT_APP_ID }}
+          BOT_APP_KEY: ${{ secrets.SEALHOUSE_BOT_APP_KEY }}
+        run: |
+          failed=0
+          while read -r repo ref; do
+            [ -f "out/${repo}/summary" ] || continue
+            ci/hack/vuln-fix.sh "${repo}" "${ref}" "out/${repo}/summary" || failed=1
+          done <repos
+          exit "${failed}"
 
   rebuild:
     needs: changes

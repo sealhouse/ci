@@ -130,7 +130,7 @@ jobs:
     if: >-
       github.event_name == 'pull_request' && (github.event.pull_request.head.ref == 'rhtas/sync' ||
       startsWith(github.event.pull_request.head.ref, 'ci-pin/') || startsWith(github.event.pull_request.head.ref, 'replaces/') ||
-      startsWith(github.event.pull_request.head.ref, 'bump/'))
+      startsWith(github.event.pull_request.head.ref, 'vulns/') || startsWith(github.event.pull_request.head.ref, 'bump/'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# vulncheck.sh REPO_DIR [OUT_DIR]
+# vulncheck.sh REPO_DIR [OUT_DIR] scans against GOVULNDB, vuln.go.dev by default.
 set -euo pipefail
 
 [ $# -ge 1 ] && [ $# -le 2 ] || { echo "usage: $0 REPO_DIR [OUT_DIR]" >&2; exit 2; }
@@ -21,7 +21,7 @@ while read -r gomod; do
   [ -z "${broken}" ] || echo "${name}: not scanned, does not load: $(tr '\n' ' ' <<<"${broken}")" >&2
   [ -n "${pkgs}" ] || continue
   # shellcheck disable=SC2086
-  if ! (cd "${repo}/${rel}" && govulncheck -format json ${pkgs} >"${json}"); then
+  if ! (cd "${repo}/${rel}" && govulncheck -db "${GOVULNDB:-https://vuln.go.dev}" -format json ${pkgs} >"${json}"); then
     echo "govulncheck failed in ${name}" >&2
     exit 1
   fi
