@@ -13,6 +13,7 @@ full="${gh_org}/${repo}"
 base_url="${SEALHOUSE_GIT_BASE:-https://github.com/${gh_org}}"
 work="$(mktemp -d)"
 trap 'chmod -R u+w "${work}" 2>/dev/null; rm -rf "${work}"' EXIT
+go -C "${root}/tools/semver" build -o "${work}/semver" .
 export GOMODCACHE="${GOMODCACHE:-${work}/modcache}"
 tree="${work}/${repo}"
 
@@ -42,23 +43,32 @@ if [ -z "${fixes}" ]; then
 fi
 
 git clone -q --filter=blob:none -b "${base}" "${base_url}/${repo}.git" "${tree}"
+# Every module's build list, "<dir> <module> <version>": a module that requires another through a replace,
+# as the operator's tools/bundle does, takes the fix too, or its go.mod is left behind.
 declare -A dirs
+: >"${work}/builds"
 while read -r gomod; do
-  dirs["$(go mod edit -json "${tree}/${gomod}" | jq -r .Module.Path)"]="$(dirname "${gomod}")"
+  dir="$(dirname "${gomod}")"
+  dirs["$(go mod edit -json "${tree}/${gomod}" | jq -r .Module.Path)"]="${dir}"
+  go -C "${tree}/${dir}" list -m -f '{{.Path}} {{.Version}}' all | sed "s|^|${dir} |" >>"${work}/builds" ||
+    { echo "${repo}: go list -m all in ${dir} failed" >&2; exit 1; }
 done < <(git -C "${tree}" ls-files '*go.mod' 'go.mod' | grep -v '/testdata/' | sort -u)
 
 # The newest fixed version per directory and module: "<dir> <module>@<version>", as a Go-Get trailer takes it.
+# Nested modules come first, as a sync replays them: a module updated before one that replaces it leaves the other untidy.
 gets="$(while read -r osv module fixed main; do
-  dir="${dirs[${main}]:-}"
-  [ -n "${dir}" ] || { echo "${repo}: no go.mod declares ${main}" >&2; exit 1; }
+  [ -n "${dirs[${main}]:-}" ] || { echo "${repo}: no go.mod declares ${main}" >&2; exit 1; }
   # A sync regenerates only plain vX.Y.Z bumps.
   if ! [[ "${fixed}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     echo "${repo}: ${osv} is fixed in ${module} ${fixed}, which is not vX.Y.Z: it needs a maintainer" >&2
     echo "${osv}" >>"${work}/skipped"
     continue
   fi
-  echo "${dir} ${module} ${fixed}"
-done <<<"${fixes}" | LC_ALL=C sort -k1,1 -k2,2 -k3,3V | awk '{ last[$1 " " $2] = $3 } END { for (k in last) print k "@" last[k] }' | LC_ALL=C sort)"
+  while read -r dir have; do
+    cmp="$("${work}/semver" "${have}" "${fixed}")" || exit 1
+    [ "${cmp}" -ge 0 ] || echo "${dir} ${module} ${fixed}"
+  done < <(awk -v m="${module}" '$2 == m && $3 != "" { print $1, $3 }' "${work}/builds")
+done <<<"${fixes}" | LC_ALL=C sort -k1,1 -k2,2 -k3,3V | awk '{ last[$1 " " $2] = $3 } END { for (k in last) print k "@" last[k] }' | LC_ALL=C sort -k1,1r -k2,2)"
 # finish fails when a fix was left to a maintainer.
 finish() { [ ! -s "${work}/skipped" ] || exit 1; exit 0; }
 [ -n "${gets}" ] || finish
