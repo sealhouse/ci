@@ -2,6 +2,7 @@
 # report-collect.sh DATE OUT writes OUT, the report for the UTC day DATE, reading with GH_TOKEN.
 # REPORT_GIT is where the sealhouse repos are cloned from, REPORT_FORKS the forks.lock to read,
 # REPORT_RUN_ID, REPORT_RUN_URL and REPORT_CI describe the run. Nothing is written on any failure.
+# A report is partial, and may still change, until the day has ended and every run it holds has completed.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -87,7 +88,9 @@ for r in "${repos[@]}"; do
       branch: .head_branch, sha: .head_sha, status, conclusion, created_at, updated_at, url: .html_url}" >"${j}/runs-${r}"
 done
 cat "${j}"/pulls-* | jq -s . >"${j}/pulls"
-cat "${j}"/runs-* | jq -s 'map(select(.event != "pull_request")) | sort_by(.created_at, .repo, .id)' >"${j}/runs.all"
+# The timer's and the report's own runs are bookkeeping, not delivery.
+cat "${j}"/runs-* | jq -s 'map(select(.event != "pull_request" and .workflow != "sealhouse-timer" and .workflow != "sealhouse-report")) |
+  sort_by(.created_at, .repo, .id)' >"${j}/runs.all"
 
 # The steps each completed run ran, so a failure counts as fixed only when the step that failed passes again.
 : >"${j}/steps"
@@ -238,7 +241,7 @@ jq -n --arg day "${day}" --arg from "${from}" --arg to "${to}" \
   --slurpfile alphas "${j}/alphas" --slurpfile nightly "${j}/nightly" --slurpfile runs "${j}/runs" \
   --slurpfile behind "${j}/behind" --slurpfile carries "${j}/carries" --argjson soak "${soak:-[]}" --argjson vulns "${vulns:-[]}" \
   --argjson open "${open_prs}" --arg alpha "${alpha_now}" '{
-    schema: 1, date: $day, status: "ok", window: {from: $from, to: $to},
+    schema: 1, date: $day, status: "ok", partial: ($now < $to or any($runs[0][]; .status != "completed")), window: {from: $from, to: $to},
     run: {id: $run_id, url: $run_url, ci: $ci, collected_at: $now},
     syncs: ($syncs | sort_by(.repo, .pr)), images: ($images | sort_by(.at, .repo)),
     prs: ($prs | sort_by(.repo, .pr)), alphas: ($alphas | sort_by(.at)),

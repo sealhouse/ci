@@ -1,0 +1,28 @@
+# Starts the workflows schedule.lock lists at their times. reports' sealhouse-tick starts it every 15 minutes:
+# GitHub's own schedules start hours late, and stop after 60 days without a commit, which reports never goes.
+name: sealhouse-timer
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency: sealhouse-timer
+
+jobs:
+  timer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+    steps:
+      - name: Scripts
+        run: |
+          git clone -q "https://github.com/${GITHUB_REPOSITORY}.git" ci
+          git -C ci checkout -q --detach "${GITHUB_SHA}"
+      - name: Start what is due
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DISPATCH_APP_ID: ${{ secrets.SEALHOUSE_DISPATCH_APP_ID }}
+          DISPATCH_APP_KEY: ${{ secrets.SEALHOUSE_DISPATCH_APP_KEY }}
+        run: ci/hack/timer.sh | tee -a "${GITHUB_STEP_SUMMARY}"

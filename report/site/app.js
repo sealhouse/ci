@@ -157,6 +157,13 @@ function lines(label, values, color) {
   };
 }
 
+// A day still being collected is drawn faded, so its counts so far do not read as a drop.
+function soFar(days, dataset) {
+  return { ...dataset, backgroundColor: days.map((d) => (d.partial ? `${dataset.backgroundColor}55` : dataset.backgroundColor)) };
+}
+
+const dayTitle = (d) => (d.status === "ok" ? `${d.date}${d.partial ? " (so far)" : ""}` : `${d.date} (${d.status === "failed" ? "collection failed" : "no report"})`);
+
 function draw(container, config) {
   const canvas = el("canvas", { role: "img", "aria-label": container.getAttribute("data-label") || "chart" });
   container.replaceChildren(canvas);
@@ -196,7 +203,7 @@ function tiles() {
 function freshness() {
   const at = rollup.last_collected_at ? new Date(rollup.last_collected_at) : null;
   const age = at ? (Date.now() - at.getTime()) / 3600000 : Infinity;
-  const [cls, icon, label] = age <= 30 ? ["good", "✓", "Up to date"] : age <= 36 ? ["warning", "!", "Due"] : ["critical", "✕", "Stale"];
+  const [cls, icon, label] = age <= 8 ? ["good", "✓", "Up to date"] : age <= 36 ? ["warning", "!", "Late"] : ["critical", "✕", "Stale"];
   $("fresh").className = `status ${cls}`;
   $("fresh").replaceChildren(el("i", { "aria-hidden": "true", text: icon }), label);
   $("asof").textContent = at ? `last collected ${zoned(at).date} ${zoned(at).time} ${zone} (${hoursText(age)} ago), covering ${rollup.first} to ${rollup.last}` : "never collected";
@@ -206,7 +213,7 @@ function coverage() {
   $("coverage").replaceChildren(...rollup.days.map((d) => {
     const busy = d.status === "ok" && (d.syncs || d.images || d.alphas || d.prs || d.runs);
     const cls = d.status === "ok" ? (busy ? "ok" : "quiet") : d.status;
-    const title = `${d.date}: ${d.status === "ok" ? (busy ? "report" : "report, quiet day") : d.status === "failed" ? "collection failed" : "no report"}`;
+    const title = `${d.date}: ${d.status === "ok" ? (d.partial ? "report so far" : busy ? "report" : "report, quiet day") : d.status === "failed" ? "collection failed" : "no report"}`;
     const icon = d.status === "failed" ? "✕" : d.status === "missing" ? "–" : "";
     const href = d.status === "ok" ? `#day/${d.date}` : d.run;
     return href ? el("a", { class: cls, href, title, "aria-label": title, text: icon }) : el("span", { class: cls, title, "aria-label": title, text: icon });
@@ -246,15 +253,12 @@ function lead() {
 function daily() {
   const days = rollup.days, labels = days.map((d) => d.date.slice(5));
   const v = (k) => days.map((d) => (d.status === "ok" ? d[k] : null));
-  const tip = { title: (items) => {
-    const d = days[items[0].dataIndex];
-    return d.status === "ok" ? d.date : `${d.date} (${d.status === "failed" ? "collection failed" : "no report"})`;
-  } };
+  const tip = { title: (items) => dayTitle(days[items[0].dataIndex]) };
   for (const [id, k, label] of [["upstream", "upstream_commits", "Upstream commits"], ["images", "images", "Images"], ["alphas", "alphas", "Alphas"]]) {
-    draw($(id), base("bar", labels, [bars(label, v(k), "--s1")], { tooltip: tip }));
+    draw($(id), base("bar", labels, [soFar(days, bars(label, v(k), "--s1"))], { tooltip: tip }));
   }
   table($("daily-table"), ["Day", "Report", "Syncs merged", "Upstream commits", "Images built", "Alphas"],
-    days.map((d) => [d.date, d.status, d.syncs, d.upstream_commits, d.images, d.alphas]), [2, 3, 4, 5]);
+    days.map((d) => [d.date, d.partial ? "so far" : d.status, d.syncs, d.upstream_commits, d.images, d.alphas]), [2, 3, 4, 5]);
 }
 
 function hands() {
@@ -263,17 +267,18 @@ function hands() {
   const person = days.map((d) => (d.status === "ok" ? d.prs - d.hands_off : null));
   legend($("hands-legend"), [["No person needed", "--s1"], ["Needed a person", "--s2"]]);
   draw($("hands"), base("bar", labels, [
-    { ...bars("No person needed", auto, "--s1"), borderRadius: 0, borderWidth: { top: 2 }, borderSkipped: false },
-    { ...bars("Needed a person", person, "--s2"), borderRadius: { topLeft: 4, topRight: 4 }, borderSkipped: false },
-  ], { stacked: true }));
+    soFar(days, { ...bars("No person needed", auto, "--s1"), borderRadius: 0, borderWidth: { top: 2 }, borderSkipped: false }),
+    soFar(days, { ...bars("Needed a person", person, "--s2"), borderRadius: { topLeft: 4, topRight: 4 }, borderSkipped: false }),
+  ], { stacked: true, tooltip: { title: (items) => dayTitle(days[items[0].dataIndex]) } }));
   table($("hands-table"), ["Day", "Merged PRs", "No person needed", "Needed a person"],
-    days.filter((d) => d.status === "ok").map((d) => [d.date, d.prs, d.hands_off, d.prs - d.hands_off]), [1, 2, 3]);
+    days.filter((d) => d.status === "ok").map((d) => [`${d.date}${d.partial ? " (so far)" : ""}`, d.prs, d.hands_off, d.prs - d.hands_off]), [1, 2, 3]);
 }
 
 function failures() {
   const days = rollup.days;
   draw($("failures"), base("bar", days.map((d) => d.date.slice(5)),
-    [bars("Failed runs", days.map((d) => (d.status === "ok" ? d.runs_failed : null)), "--s2")]));
+    [soFar(days, bars("Failed runs", days.map((d) => (d.status === "ok" ? d.runs_failed : null)), "--s2"))],
+    { tooltip: { title: (items) => dayTitle(days[items[0].dataIndex]) } }));
   const inc = rollup.incidents.slice(-15).reverse();
   table($("incidents"), ["Failed", "Workflow", "Step", "Recovered after"],
     inc.map((i) => [stamp(i.from), el("span", {}, link(i.run, i.workflow), el("br"), el("span", { class: "small", text: i.repo })),
@@ -374,12 +379,11 @@ function latest() {
   const d = okDays().pop();
   if (!d) return empty($("latest"), "Appears after the first report.");
   $("latest-title").textContent = `Latest day, ${d.date}`;
-  const partial = rollup.last_collected_at && rollup.last_collected_at.slice(0, 10) === d.date;
   $("latest").replaceChildren(
     el("div", { class: "stats" }, stat(d.syncs, "sync merged", "syncs merged"), stat(d.upstream_commits, "upstream commit", "upstream commits"),
       stat(d.images, "image built", "images built"), stat(d.alphas, "alpha", "alphas"), stat(d.prs, "PR merged", "PRs merged"),
       stat(d.runs_failed, "failed run", "failed runs")),
-    el("p", { class: "small" }, partial ? "Collected part-way through this UTC day, so it is not complete yet. " : "",
+    el("p", { class: "small" }, d.partial ? "This UTC day is still being collected, every hour, so these are its counts so far. " : "",
       link(`#day/${d.date}`, "Open the day report")),
   );
 }

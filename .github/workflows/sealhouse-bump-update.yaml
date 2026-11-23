@@ -1,10 +1,13 @@
 # Merges green ci-pin, replaces and vulns PRs, then updates the next bump PR: when their PR lanes pass, after an operator merge, and every six hours in case a request was lost.
 name: sealhouse-bump-update
+run-name: ${{ inputs.timer }}
 
 on:
-  schedule:
-    - cron: '41 */6 * * *'
   workflow_dispatch:
+    inputs:
+      timer:
+        description: set by sealhouse-timer, which names the run after it
+        default: ''
 
 permissions: {}
 

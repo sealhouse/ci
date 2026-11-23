@@ -67,6 +67,12 @@ class H(BaseHTTPRequestHandler):
             return self.reply(200, {"data": {}})
         m = re.match(r"/repos/([^/]+/[^/]+)(/.*)$", p)
         repo, rest = m.group(1).split("/")[1], m.group(2)
+        wf = re.match(r"/actions/workflows/([^/]+)/runs$", rest)
+        if method == "GET" and wf and q.get("created", [""])[0].startswith(">="):
+            since, event = q["created"][0][2:], q.get("event", [None])[0]
+            runs = [r for r in state.get("runs_by_repo", {}).get(repo, []) if r["path"].endswith("/" + wf.group(1))
+                    and r["created_at"] >= since and event in (None, r["event"])]
+            return self.page(runs, "workflow_runs")
         if method == "GET" and "pulls_by_repo" in state:
             if rest == "/pulls" and q.get("state") == ["all"]:
                 return self.page(state["pulls_by_repo"].get(repo, []))

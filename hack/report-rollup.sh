@@ -29,7 +29,7 @@ jq -s '
     days: [dates($all[0].date; $all[-1].date)[] as $d | $by[$d] as $r |
       if $r == null then {date: $d, status: "missing"}
       elif $r.status == "failed" then {date: $d, status: "failed", run: $r.run.url}
-      else {date: $d, status: "ok", run: $r.run.url,
+      else {date: $d, status: "ok", partial: ($r.partial // false), run: $r.run.url,
         syncs: ([$r.syncs[] | select(.merged)] | length),
         syncs_closed: ([$r.syncs[] | select(.merged | not)] | length),
         upstream_commits: ([$r.syncs[].upstream.count // 0] | add // 0),
