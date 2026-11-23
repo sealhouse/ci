@@ -454,7 +454,9 @@ async function dayview(date) {
     el("p", { class: "small", text: zone === "UTC" ? "Times are UTC." :
       `The day runs midnight to midnight UTC. Times are ${zone}, with the date shown when it falls on another day there.` }),
     section("Alphas", r.alphas, (b) => table(b, ["Published", "Alpha", "Ships"], r.alphas.map((a) =>
-      [time(a.at), a.csv.replace(/^secure-sign-pqc-operator\./, ""), a.components.length ? a.components.map((c) => c.repo).join(", ") : "operator change only"]), [], [2])),
+      [time(a.at), a.csv.replace(/^secure-sign-pqc-operator\./, ""), a.components.length ? a.components.map((c) => (c.upstream && c.upstream.count
+        ? `${c.repo} (${c.upstream.count} upstream commit${c.upstream.count === 1 ? "" : "s"})` : `${c.repo} (rebuild, no new upstream commits)`)).join(", ")
+        : "operator change only"]), [], [2])),
     section("Syncs", syncs, (b) => table(b, ["Closed", "Pull request", "Upstream commits", "Result"], syncs.map((s) =>
       [time(s.closed_at), pr(s.repo, s.pr), s.upstream ? s.upstream.count : "–", s.merged ? "merged" : "closed unmerged"]), [2])),
     section("Images built", images, (b) => table(b, ["Built", "Image", "Commit", "Digest"], images.map((i) =>

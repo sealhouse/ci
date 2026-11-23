@@ -60,7 +60,8 @@
   <div class="tabpanel" id="tab-delivery" role="tabpanel" aria-label="Delivery" hidden>
     <section class="card">
       <h2>Upstream to alpha, per component</h2>
-      <p class="small">Hours from the newest upstream commit an alpha took in to that alpha's release, split by stage.</p>
+      <p class="small">Hours from the newest upstream commit an alpha took in to that alpha's release, split by stage.
+        Only components that brought new upstream commits appear: an alpha that changes only the operator, or ships a rebuild of upstream code an earlier alpha had, has no upstream commit to time.</p>
       <div class="legend" id="lead-legend"></div>
       <div class="chart tall" id="lead"></div>
       <details><summary>Table</summary><div class="scroll" id="lead-table"></div></details>
