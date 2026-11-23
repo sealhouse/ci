@@ -94,3 +94,15 @@ date	repo	osv	module	version	fixed	due
 2026-11-23T20:31:40Z	sigstore-go	GO-2026-6865	github.com/klauspost/compress	v1.20.1	v1.20.2	2026-10-19
 2026-11-23T20:31:40Z	timestamp-authority					
 2026-11-23T20:31:40Z	secure-sign-pqc-operator					
+2026-11-23T22:07:46Z	cosign					
+2026-11-23T22:07:46Z	dex					
+2026-11-23T22:07:46Z	fulcio					
+2026-11-23T22:07:46Z	go-oidc					
+2026-11-23T22:07:46Z	go-tuf					
+2026-11-23T22:07:46Z	protobuf-specs					
+2026-11-23T22:07:46Z	rekor-tiles					
+2026-11-23T22:07:46Z	sigstore					
+2026-11-23T22:07:46Z	sigstore-go					
+2026-11-23T22:07:46Z	timestamp-authority					
+2026-11-23T22:07:46Z	secure-sign-pqc-operator	GO-2026-6974	go.opentelemetry.io/otel/sdk	v1.46.0	v1.47.0	2026-10-09
+2026-11-23T22:07:46Z	secure-sign-pqc-operator	GO-2026-6974	go.opentelemetry.io/otel/trace	v1.46.0	v1.47.0	2026-10-09
