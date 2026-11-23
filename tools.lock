@@ -1,4 +1,4 @@
-GO=1.27.3 65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40
+GO=1.27.4 7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840
 KIND=sigs.k8s.io/kind@v0.33.0
 KIND_BIN=https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64 aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
 COSIGN=github.com/sigstore/cosign/v3/cmd/cosign@v3.1.4
