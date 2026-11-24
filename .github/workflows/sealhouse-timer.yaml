@@ -1,6 +1,7 @@
 # Starts the workflows schedule.lock lists at their times. Each run is a link that starts the next one, which waits
-# in the timer environment for most of a quarter hour, so it runs every quarter hour without GitHub's own schedules: they start hours late
-# or not at all. reports' sealhouse-tick starts a run whenever no link is waiting, in case the chain breaks.
+# in the timer environment for most of a quarter hour and then for the quarter hour, so it runs on the quarter hour
+# without GitHub's own schedules: they start hours late or not at all. reports' sealhouse-tick starts a run whenever
+# no link is waiting, in case the chain breaks.
 name: sealhouse-timer
 run-name: ${{ inputs.chained && 'timer link' || 'sealhouse-timer' }}
 
@@ -21,8 +22,12 @@ jobs:
     timeout-minutes: 30
     environment: timer
     steps:
-      - name: Waited
-        run: date -u
+      - name: Wait for the quarter hour
+        run: |
+          now="$(date -u +%s)"
+          left=$(( 900 - now % 900 ))
+          [ "${left}" -gt 300 ] || sleep "${left}"
+          date -u
 
   timer:
     needs: wait
