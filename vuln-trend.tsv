@@ -106,3 +106,15 @@ date	repo	osv	module	version	fixed	due
 2026-11-23T22:07:46Z	timestamp-authority					
 2026-11-23T22:07:46Z	secure-sign-pqc-operator	GO-2026-6974	go.opentelemetry.io/otel/sdk	v1.46.0	v1.47.0	2026-10-09
 2026-11-23T22:07:46Z	secure-sign-pqc-operator	GO-2026-6974	go.opentelemetry.io/otel/trace	v1.46.0	v1.47.0	2026-10-09
+2026-11-24T02:13:15Z	cosign					
+2026-11-24T02:13:15Z	dex					
+2026-11-24T02:13:15Z	fulcio					
+2026-11-24T02:13:15Z	go-oidc					
+2026-11-24T02:13:15Z	go-tuf					
+2026-11-24T02:13:15Z	protobuf-specs					
+2026-11-24T02:13:15Z	rekor-tiles					
+2026-11-24T02:13:15Z	sigstore					
+2026-11-24T02:13:15Z	sigstore-go					
+2026-11-24T02:13:15Z	timestamp-authority					
+2026-11-24T02:13:15Z	secure-sign-pqc-operator	GO-2026-6974	go.opentelemetry.io/otel/sdk	v1.46.0	v1.47.0	2026-10-09
+2026-11-24T02:13:15Z	secure-sign-pqc-operator	GO-2026-6974	go.opentelemetry.io/otel/trace	v1.46.0	v1.47.0	2026-10-09
