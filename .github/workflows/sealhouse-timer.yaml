@@ -1,18 +1,35 @@
-# Starts the workflows schedule.lock lists at their times. reports' sealhouse-tick starts it every 15 minutes:
-# GitHub's own schedules start hours late, and stop after 60 days without a commit, which reports never goes.
+# Starts the workflows schedule.lock lists at their times. Each run is a link that starts the next one, which waits
+# in the timer environment for most of a quarter hour, so it runs every quarter hour without GitHub's own schedules: they start hours late
+# or not at all. reports' sealhouse-tick starts a run whenever no link is waiting, in case the chain breaks.
 name: sealhouse-timer
+run-name: ${{ inputs.chained && 'timer link' || 'sealhouse-timer' }}
 
 on:
   workflow_dispatch:
+    inputs:
+      chained:
+        description: Wait in the timer environment first, as the previous link started it
+        type: boolean
+        default: false
 
 permissions: {}
 
-concurrency: sealhouse-timer
-
 jobs:
+  wait:
+    if: ${{ inputs.chained }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: timer
+    steps:
+      - name: Waited
+        run: date -u
+
   timer:
+    needs: wait
+    if: ${{ !cancelled() && (needs.wait.result == 'success' || needs.wait.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    concurrency: sealhouse-timer
     permissions:
       actions: write
     steps:
@@ -25,4 +42,27 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           DISPATCH_APP_ID: ${{ secrets.SEALHOUSE_DISPATCH_APP_ID }}
           DISPATCH_APP_KEY: ${{ secrets.SEALHOUSE_DISPATCH_APP_KEY }}
-        run: ci/hack/timer.sh | tee -a "${GITHUB_STEP_SUMMARY}"
+        run: |
+          set -o pipefail
+          ci/hack/timer.sh | tee -a "${GITHUB_STEP_SUMMARY}"
+
+  next:
+    needs: timer
+    if: ${{ !cancelled() && needs.timer.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency: sealhouse-timer-next
+    permissions:
+      actions: write
+    steps:
+      - name: Scripts
+        run: |
+          git clone -q "https://github.com/${GITHUB_REPOSITORY}.git" ci
+          git -C ci checkout -q --detach "${GITHUB_SHA}"
+      - name: Start the next link
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TIMER_CHAINED: ${{ inputs.chained }}
+        run: |
+          set -o pipefail
+          ci/hack/timer-next.sh | tee -a "${GITHUB_STEP_SUMMARY}"
