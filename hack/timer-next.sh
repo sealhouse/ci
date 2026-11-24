@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# timer-next.sh starts the timer's next link: a sealhouse-timer run that waits in the timer environment for most of a
-# quarter hour, then starts what is due and the link after it. A link already waiting or queued is left to carry on instead.
+# timer-next.sh starts the timer's next link: a sealhouse-timer run that waits in the timer environment and then for
+# the quarter hour, then starts what is due and the link after it. A link already waiting or queued is left to carry on instead.
 # timer-next.sh --start, from reports' sealhouse-tick, starts a timer run at once with the sealhouse-dispatch App when
 # no link is waiting, so a broken chain starts again. A link that comes less than 10 minutes after it was started
 # fails rather than start another, as the timer environment's wait is missing. TIMER_NOW sets the time.
