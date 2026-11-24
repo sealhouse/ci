@@ -7,3 +7,4 @@ date	commit	csv	goroutines	heap_mib	sys_mib	kills	result
 2026-11-19T19:01:19Z	18295e8b6aaf	secure-sign-pqc-operator.v0.1.0-alpha.15	138	12.6	29.8	14	pass
 2026-11-23T21:55:30Z	cf8bd4cba4c8	secure-sign-pqc-operator.v0.1.0-alpha.20	138.5	12.8	29.8	14	pass
 2026-11-23T23:31:18Z	4278915154ef	secure-sign-pqc-operator.v0.1.0-alpha.21	138	12.9	29.8	15	pass
+2026-11-24T03:38:22Z	4278915154ef	secure-sign-pqc-operator.v0.1.0-alpha.21	139	11.7	26.1	14	pass
