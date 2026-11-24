@@ -285,6 +285,12 @@ jq -e '.vulns == [{date: "2026-03-10", fix: 2, baking: 1, nofix: 1, repos: 2}] a
   and (.behind | length == 2) and .alpha == "op.v0.1.0-alpha.2" and ([.carries[] | "\(.repo) \(.commits | length)"] == ["sigstore-go 0", "timestamp-authority 1"])' "${ru}" >/dev/null ||
   fail "series: $(jq -c '[.vulns, .nightly, .behind, .carries]' "${ru}")"
 ok "the vulnerability series, with a fix due that night fixable, a later one baking and one recorded before due counted fixable; the nightly and waiting-commit series, and the latest carries"
+jq '.vulns = [.vulns[0] | .date = "2026-03-10T01:00:00Z" | .repo = "early" | .osv = "GO-2026-0009" | .fixed = "v2" | .due = "2026-03-01"]
+  + .vulns' "${daily}/${day}.json" >"${t}/early.json"
+mv "${t}/early.json" "${daily}/${day}.json"
+"${hack}/report-rollup.sh" "${daily}" "${ru}"
+jq -e '.vulns == [{date: "2026-03-10", fix: 2, baking: 1, nofix: 1, repos: 2}]' "${ru}" >/dev/null || fail "two scans: $(jq -c .vulns "${ru}")"
+ok "a day with two scans counts the last, so a fix found in the first and merged before the second is gone"
 cp "${out}/again.json" "${daily}/2026-03-12.json"
 if "${hack}/report-rollup.sh" "${daily}" "${t}/bad.json" 2>/dev/null; then fail "a report under another date's name was accepted"; fi
 rm "${daily}/2026-03-12.json"
