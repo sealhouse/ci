@@ -1,9 +1,10 @@
-# The timer starts each workflow at its UTC times, *:MM being every hour, with the inputs given.
+# The timer starts each workflow at its UTC times, on the quarter hour, *:MM being every hour, with the inputs given.
+# The timer runs every quarter hour, so times a quarter hour or more apart start in that order.
 # <repo> <workflow> <times> [input=value ...]
-ci sealhouse-sync.yaml 06:17
-ci sealhouse-sync.yaml 00:41,06:41,12:41,18:41 finish=true
-ci sealhouse-bump-update.yaml 00:41,06:41,12:41,18:41
-ci sealhouse-replaces.yaml 07:23
-ci sealhouse-nightly.yaml 08:40
-ci sealhouse-report.yaml *:05
-secure-sign-pqc-operator sealhouse-resilience.yaml 09:40 long=true
+ci sealhouse-sync.yaml 06:15
+ci sealhouse-sync.yaml 00:45,06:45,12:45,18:45 finish=true
+ci sealhouse-bump-update.yaml 00:45,06:45,12:45,18:45
+ci sealhouse-replaces.yaml 07:30
+ci sealhouse-nightly.yaml 08:45
+ci sealhouse-report.yaml *:00
+secure-sign-pqc-operator sealhouse-resilience.yaml 09:45 long=true

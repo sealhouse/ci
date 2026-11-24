@@ -84,17 +84,17 @@ A fix bakes first: ci takes it once its release, or for Go's own fixes the Go re
 
 | Workflow | Trigger | Acts as |
 |---|---|---|
-| `sealhouse-timer` | reports' `sealhouse-tick`, every 15 minutes | the job token; sealhouse-dispatch for the operator |
-| `sealhouse-sync` | 06:17 starts syncs; a sync PR's lane, and every six hours, finish green ones | sealhouse-sync |
+| `sealhouse-timer` | its previous run, after the `timer` environment's wait; reports' `sealhouse-tick` when no run is waiting | the job token; sealhouse-dispatch for the operator |
+| `sealhouse-sync` | 06:15 starts syncs; a sync PR's lane, and every six hours, finish green ones | sealhouse-sync |
 | `sealhouse-repin` | push to `main` | sealhouse-bot |
 | `sealhouse-bump` | a fork's merge lane | sealhouse-bot |
 | `sealhouse-bump-update` | a ci-pin, replaces, vulns or bump PR's lane; a sync fast-forward; the operator's merge lane; every six hours | sealhouse-bot |
 | `sealhouse-catalog` | the operator's merge lane | sealhouse-bot |
-| `sealhouse-replaces` | 07:23; `replaces.lock` push; dispatch | sealhouse-sync tags, sealhouse-bot opens PRs |
-| `sealhouse-nightly` | 08:40; the e2e, soak and rebuilds only when their inputs changed or weekly | the job token; sealhouse-bot opens vulns PRs |
+| `sealhouse-replaces` | 07:30; `replaces.lock` push; dispatch | sealhouse-sync tags, sealhouse-bot opens PRs |
+| `sealhouse-nightly` | 08:45; the e2e, soak and rebuilds only when their inputs changed or weekly | the job token; sealhouse-bot opens vulns PRs |
 | `sealhouse-report` | every hour: today so far, and yesterday until it is final | the job token reads; sealhouse-bot commits to reports |
 | `pr.yaml`, `merge.yaml`, `sync-merge-guard.yaml` | called from each repo's `sealhouse-*.yaml`, pinned to one ci commit | the caller; lanes hand off through sealhouse-dispatch |
 
-Times are UTC, from `schedule.lock`. GitHub's own schedules started hours late, so only reports' `sealhouse-tick` has one: every 15 minutes it starts `sealhouse-timer`, which starts each workflow whose time has passed with no run it started for that time. A missed time runs once, late, and a cancelled run is started again. The timer's runs are named `timer <time>`; a run started by hand is not, and leaves the timer's alone. The operator's `sealhouse-resilience` runs at 09:40 the same way.
+Times are UTC, from `schedule.lock`. GitHub's own schedules started hours late or not at all, so `sealhouse-timer` keeps its own time: each run starts each workflow whose time has passed with no run it started for that time, then starts the next run, a `timer link`, which waits in the `timer` environment (a 12 minute wait timer, `main` only) before it does the same. A link that did not wait fails rather than start another. Reports' `sealhouse-tick` is the only GitHub schedule left; when it fires and no link is waiting, it starts the timer again. A missed time runs once, late, and a cancelled run is started again. The timer's runs are named `timer <time>`; a run started by hand is not, and leaves the timer's alone. The operator's `sealhouse-resilience` runs at 09:45 the same way. Times are on the quarter hour; the timer runs a little more often than that, so times a quarter hour or more apart start in order.
 
 `hack/status.sh` prints what waits on a maintainer, the active runs and the open PRs across the org.

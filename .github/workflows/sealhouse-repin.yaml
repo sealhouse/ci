@@ -38,6 +38,7 @@ on:
       - hack/sync-finish.sh
       - hack/sync-fork.sh
       - hack/timer.sh
+      - hack/timer-next.sh
       - hack/trend-record.sh
       - hack/vuln-due.sh
       - hack/vuln-fix.sh

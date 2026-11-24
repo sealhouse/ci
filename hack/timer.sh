@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # timer.sh starts each schedule.lock workflow whose latest time has passed with no run the timer started for it,
-# so a missed time runs once, late. A run it starts is named "timer <time>" through the workflow's timer input;
+# so a missed time runs once, late. Times are on the quarter hour, as the timer runs every quarter hour. A run it starts is named "timer <time>" through the workflow's timer input;
 # one that was cancelled, as GitHub does to a run waiting behind another, is started again.
 # ci's workflows start with GH_TOKEN, other repos' with the sealhouse-dispatch App. TIMER_NOW sets the time.
 set -euo pipefail
@@ -19,7 +19,7 @@ ci_token="${GH_TOKEN:-}"
 latest() {
   local best=0 t h m at day hours
   for t in ${1//,/ }; do
-    [[ "${t}" =~ ^(\*|[01][0-9]|2[0-3]):([0-5][0-9])$ ]] || { echo "${lockfile}: bad time ${t}" >&2; return 1; }
+    [[ "${t}" =~ ^(\*|[01][0-9]|2[0-3]):(00|15|30|45)$ ]] || { echo "${lockfile}: bad time ${t}" >&2; return 1; }
     h="${BASH_REMATCH[1]}" m="${BASH_REMATCH[2]}"
     hours="$([ "${h}" = '*' ] && seq 0 23 || echo "${h}")"
     for day in "${today}" $((today - 86400)); do
