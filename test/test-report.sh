@@ -291,6 +291,13 @@ mv "${t}/early.json" "${daily}/${day}.json"
 "${hack}/report-rollup.sh" "${daily}" "${ru}"
 jq -e '.vulns == [{date: "2026-03-10", fix: 2, baking: 1, nofix: 1, repos: 2}]' "${ru}" >/dev/null || fail "two scans: $(jq -c .vulns "${ru}")"
 ok "a day with two scans counts the last, so a fix found in the first and merged before the second is gone"
+jq '.nightly = [.nightly[0] | .id = 899 | .conclusion = "failure" | .created_at = "2026-03-10T02:00:00Z" | .url = "https://github.example/runs/899"]
+  + .nightly' "${daily}/${day}.json" >"${t}/rerun.json"
+mv "${t}/rerun.json" "${daily}/${day}.json"
+"${hack}/report-rollup.sh" "${daily}" "${ru}"
+jq -e --arg d "${day}" '[.nightly[] | select(.date == $d) | .url] == ["https://github.example/runs/900"]' "${ru}" >/dev/null ||
+  fail "two nightlies: $(jq -c .nightly "${ru}")"
+ok "a day with two nightlies shows the last, so a catch-up run replaces the one before it"
 cp "${out}/again.json" "${daily}/2026-03-12.json"
 if "${hack}/report-rollup.sh" "${daily}" "${t}/bad.json" 2>/dev/null; then fail "a report under another date's name was accepted"; fi
 rm "${daily}/2026-03-12.json"
