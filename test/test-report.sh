@@ -148,15 +148,15 @@ state "$(jq -n \
     $(run 102 sealhouse-merge push rhtas/main "${k}" "$(iso "$(at '03:05')")" "$(iso "$(at '03:20')")" success),
     $(run 103 sealhouse-pr pull_request rhtas/sync "${k}" "$(iso "$(at '02:31')")" "$(iso "$(at '02:50')")" success),
     $(run 104 sealhouse-merge push rhtas/main "${c0}" "$(iso "$(at '-3 days')")" "$(iso "$(at '-3 days')")" success)]" \
-  --argjson ciruns "[$(run 900 sealhouse-nightly schedule main aaaa "$(iso "$(at '08:40')")" "$(iso "$(at '09:30')")" success),
+  --argjson ciruns "[$(run 900 sealhouse-nightly workflow_dispatch main aaaa "$(iso "$(at '08:40')")" "$(iso "$(at '09:30')")" success | jq -c '.name = "timer 08:40Z"'),
     $(run 910 sealhouse-sync schedule main aaaa "$(iso "$(at '10:00')")" "$(iso "$(at '10:05')")" failure),
     $(run 911 sealhouse-sync schedule main aaaa "$(iso "$(at '10:41')")" "$(iso "$(at '10:42')")" success),
     $(run 912 sealhouse-sync workflow_dispatch main aaaa "$(iso "$(at '14:00')")" "$(iso "$(at '14:06')")" success),
     $(run 920 sealhouse-repin push main aaaa "$(iso "$(at '15:00')")" "$(iso "$(at '15:00')")" failure),
     $(run 921 sealhouse-repin push main aaaa "$(iso "$(at '16:00')")" "$(iso "$(at '16:30')")" success),
     $(run 930 sealhouse-nightly workflow_dispatch main aaaa 2026-03-02T23:00:00Z 2026-03-02T23:30:00Z '' | jq -c '.status = "in_progress"'),
-    $(run 940 sealhouse-timer workflow_dispatch main aaaa 2026-03-02T10:00:00Z 2026-03-02T10:01:00Z failure),
-    $(run 941 sealhouse-report workflow_dispatch main aaaa 2026-03-02T10:05:00Z 2026-03-02T10:07:00Z failure)]" \
+    $(run 940 sealhouse-timer workflow_dispatch main aaaa 2026-03-02T10:00:00Z 2026-03-02T10:01:00Z failure | jq -c '.name = "timer link"'),
+    $(run 941 sealhouse-report workflow_dispatch main aaaa 2026-03-02T10:05:00Z 2026-03-02T10:07:00Z failure | jq -c '.name = "timer 10:00Z"')]" \
   '{page_size: 2, fail_paths: [],
     pulls_by_repo: {"timestamp-authority": $tsa, "secure-sign-pqc-operator": $op, ci: $ci},
     reviews: {"secure-sign-pqc-operator#5": [{user: {login: "maint"}, state: "APPROVED"}, {user: {login: "sealhouse-bot[bot]"}, state: "APPROVED"}],

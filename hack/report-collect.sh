@@ -79,12 +79,14 @@ for b in soak-trend vuln-trend; do
 done
 
 # Every PR, run and sync PR the day can need, one API listing per repo.
+# A run is named by its workflow file: a timer-started run's name is its run-name.
 for r in "${repos[@]}"; do
   gh_api_pages "/repos/${gh_org}/${r}/pulls?state=all&per_page=100" \
     ".[] | {repo: \"${r}\", number, title, head: .head.ref, head_sha: .head.sha, base: .base.ref, author: .user.login,
       created_at, closed_at, merged_at, merge_sha: .merge_commit_sha}" >"${j}/pulls-${r}"
   gh_api_pages "/repos/${gh_org}/${r}/actions/runs?created=${day}&per_page=100" \
-    ".workflow_runs[] | select(.name | startswith(\"sealhouse-\")) | {repo: \"${r}\", workflow: .name, id, event,
+    ".workflow_runs[] | (.path | ltrimstr(\".github/workflows/\") | rtrimstr(\".yaml\")) as \$w | select(\$w | startswith(\"sealhouse-\")) |
+      {repo: \"${r}\", workflow: \$w, id, event,
       branch: .head_branch, sha: .head_sha, status, conclusion, created_at, updated_at, url: .html_url}" >"${j}/runs-${r}"
 done
 cat "${j}"/pulls-* | jq -s . >"${j}/pulls"
