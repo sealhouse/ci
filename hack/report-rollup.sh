@@ -63,7 +63,8 @@ jq -s '
           else . end) |
         .done + (if .open then [{repo: .open.repo, workflow: .open.workflow, branch: .open.branch, step: .open.step,
           from: .open.created_at, to: null, hours: null, run: .open.url}] else [] end)) | add // [] | sort_by(.from, .step // "")),
-    nightly: [$ok[] | .date as $d | .nightly[] | {date: $d, conclusion, url,
+    # A day counts its last nightly, as a catch-up or rerun replaces the one before it.
+    nightly: [$ok[] | .date as $d | select(.nightly | length > 0) | .nightly | max_by(.created_at) | {date: $d, conclusion, url,
       jobs: (.jobs | map({key: .name, value: .conclusion}) | from_entries)}],
     soak: [$ok[].soak[]],
     # A day counts its last scan. A fix bakes until its due day; rows from before due was recorded count as taken.
