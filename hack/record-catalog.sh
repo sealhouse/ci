@@ -15,7 +15,7 @@ work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
 
 printf '%s' "$1" | base64 -d >"${work}/head.env"
-grep -qvE '^(OPERATOR_IMAGE|BUNDLE_IMAGE|CATALOG_IMAGE|CSV|PREVIOUS_CSV|OPERATOR_COMMIT)=[A-Za-z0-9_./:@-]*$' "${work}/head.env" &&
+grep -qvE '^(OPERATOR_IMAGE|BUNDLE_IMAGE|CATALOG_IMAGE|CSV|PREVIOUS_CSV|BASE_CSV|OPERATOR_COMMIT)=[A-Za-z0-9_./:@-]*$' "${work}/head.env" &&
   { echo "head.env has an unexpected line" >&2; exit 1; }
 get() { sed -n "s/^$1=//p" "${work}/head.env"; }
 image="$(get CATALOG_IMAGE)" csv="$(get CSV)"
@@ -31,8 +31,12 @@ jq -e -s --arg c "${csv}" 'any(.[]; .schema == "olm.bundle" and .name == $c)' "$
 GH_TOKEN="$(gh_app_token "${BOT_APP_ID:?}" "${BOT_APP_KEY:?}" '{"contents":"write"}' pqc-catalog)"
 export GH_TOKEN
 recorded="$(gh_file "${catalog}" alpha/head.env | sed -n 's/^CSV=//p')"
-[ "$(get PREVIOUS_CSV)" = "${recorded}" ] ||
-  { echo "${csv} replaces $(get PREVIOUS_CSV), but ${catalog} records ${recorded:-no head}" >&2; exit 1; }
+# The head it was published against: BASE_CSV, which differs from
+# PREVIOUS_CSV at an upgrade boundary, or PREVIOUS_CSV from an older publish.
+base="$(get PREVIOUS_CSV)"
+grep -q '^BASE_CSV=' "${work}/head.env" && base="$(get BASE_CSV)"
+[ "${base}" = "${recorded}" ] ||
+  { echo "${csv} was published against ${base:-no head}, but ${catalog} records ${recorded:-no head}" >&2; exit 1; }
 new="$(gh_commit "${catalog}" main "alpha: ${csv}" "alpha/catalog.json=${work}/catalog.json" "alpha/head.env=${work}/head.env")"
 jq -n --arg s "${new}" '{sha: $s, force: false}' | gh_api PATCH "/repos/${catalog}/git/refs/heads/main" - >/dev/null
 echo "pqc-catalog main is ${new}: alpha: ${csv}"

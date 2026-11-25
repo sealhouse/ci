@@ -309,6 +309,21 @@ calls POST /git/commits | jq -e --arg m "alpha: ${csv}" '.body.message == $m and
 calls PATCH 'pqc-catalog/git/refs/heads/main$' | jq -e '.body.force == false' >/dev/null || fail "catalog ref"
 ok "record-catalog refuses anything but the promoted alpha, then records it"
 
+# At an upgrade boundary the head replaces nothing; BASE_CSV names the head it
+# was published against.
+boundary_env() { printf 'CATALOG_IMAGE=%s\nCSV=%s\nPREVIOUS_CSV=\nBASE_CSV=%s\nOPERATOR_COMMIT=%s\n' "${catalog}" "${csv}" "$1" "${commit}" | base64 -w0; }
+state '{"files": {"alpha/head.env": "CSV=secure-sign-pqc-operator.v2.0.0-alpha.2\n"}}'
+reset_log
+"${hack}/record-catalog.sh" "$(boundary_env secure-sign-pqc-operator.v2.0.0-alpha.1)" >"${t}/out" 2>&1 &&
+  fail "recorded a boundary head published against another head"
+"${hack}/record-catalog.sh" "$(boundary_env "")" >"${t}/out" 2>&1 &&
+  fail "recorded a boundary head published against no head over a recorded one"
+[ -z "$(calls POST /git/commits)" ] || fail "a refused boundary record committed"
+"${hack}/record-catalog.sh" "$(boundary_env secure-sign-pqc-operator.v2.0.0-alpha.2)" >/dev/null
+calls POST /git/blobs | jq -r .body.content | grep -qx 'BASE_CSV=secure-sign-pqc-operator.v2.0.0-alpha.2' ||
+  fail "the boundary head.env lost its BASE_CSV"
+ok "record-catalog records a boundary head against the head it was published against"
+
 # sync-fork, on real repos.
 export SEALHOUSE_GIT_BASE="${t}/origin" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@test.invalid GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@test.invalid
