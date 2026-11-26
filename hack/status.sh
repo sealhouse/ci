@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# status.sh prints what waits on a maintainer, the active workflow runs and the open PRs across the org, with your gh login.
+# status.sh prints what waits on a maintainer, the active workflow runs, the timer chain and the open PRs across the org,
+# with your gh login.
 set -euo pipefail
 
 org="${SEALHOUSE_ORG:-sealhouse}"
@@ -24,11 +25,16 @@ gh api graphql -f q="org:${org} is:pr is:open" -f query='
 gh api --paginate "/orgs/${org}/repos?per_page=100" --jq '.[] | select(.archived | not) | .name' | sort >"${work}/repos"
 while read -r repo; do
   gh api "/repos/${org}/${repo}/actions/runs?per_page=50" \
-    --jq "[.workflow_runs[] | select(.status != \"completed\") | {repo: \"${repo}\", name, event, branch: .head_branch, status, created: .created_at, url: .html_url}]" \
+    --jq "[.workflow_runs[] | {repo: \"${repo}\", workflow: (.path | split(\"/\") | last), name, event, branch: .head_branch,
+      status, conclusion, created: .created_at, url: .html_url}
+      | select(.status != \"completed\" or .workflow == \"sealhouse-timer.yaml\")]" \
     >"${work}/runs-${repo}.json" &
 done <"${work}/repos"
 wait
-jq -s 'add // [] | sort_by(.created)' "${work}"/runs-*.json >"${work}/runs.json"
+# A timer link is always running, and waits in the timer environment, so it is shown apart.
+jq -s 'add // [] | sort_by(.created)' "${work}"/runs-*.json >"${work}/all-runs.json"
+jq '[.[] | select(.workflow == "sealhouse-timer.yaml" and .repo == "ci")]' "${work}/all-runs.json" >"${work}/timer.json"
+jq '[.[] | select((.workflow == "sealhouse-timer.yaml" and .repo == "ci") | not)]' "${work}/all-runs.json" >"${work}/runs.json"
 
 # bot-merge.sh merges these once they are green, so they wait on no one.
 age='def selfmerge: .author == "sealhouse-bot" and (.ref | test("^(ci-pin|replaces|vulns)/"));
@@ -46,6 +52,12 @@ echo "Needs a maintainer"
 echo
 echo "Active runs"
 jq -r "${age}"' .[] | [.repo, .name, .event, .branch, .status, (.created | age), .url] | @tsv' "${work}/runs.json" | table
+
+echo
+echo "Timer"
+jq -r "${age}"' (map(select(.status != "completed")) | if length == 0 then [["no link running", "", "", ""]] else map([.name, .status, (.created | age), .url]) end),
+    (map(select(.status == "completed")) | last // empty | [["last link", .conclusion, (.created | age), .url]])
+    | .[] | @tsv' "${work}/timer.json" | table
 
 echo
 echo "Open PRs"
