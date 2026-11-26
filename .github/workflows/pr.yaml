@@ -66,7 +66,17 @@ jobs:
         if: startsWith(github.event.pull_request.base.ref, 'rhtas/') || startsWith(github.event.pull_request.base.ref, 'release-')
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: 'FORK_BRANCH=HEAD "${CI_DIR}/hack/fork-sync.sh" --check --since "${BASE_SHA}" .'
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          FORK_BRANCH=HEAD "${CI_DIR}/hack/fork-sync.sh" --check --since "${BASE_SHA}" .
+          # A squash merge keeps the UPSTREAM label only from a lone commit; bots set their own title.
+          case "${HEAD_REF}" in
+            rhtas/sync | ci-pin/* | replaces/* | vulns/* | bump/*) ;;
+            *)
+              n="$(git rev-list --count "${BASE_SHA}..HEAD")"
+              [ "${n}" -eq 1 ] || { echo "a carry PR needs exactly one commit, as the squash merge keeps only a lone commit's message; this one has ${n}" >&2; exit 1; }
+              ;;
+          esac
 
       - name: Go
         run: '"${CI_DIR}/hack/install-go.sh"'
