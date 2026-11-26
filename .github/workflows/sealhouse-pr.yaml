@@ -29,6 +29,8 @@ jobs:
         run: go -C "${CI_DIR}" run "$(sed -n 's/^ACTIONLINT=//p' "${CI_DIR}/tools.lock")" -shellcheck= -pyflakes=
       - name: Syntax
         run: bash -n "${CI_DIR}"/hack/*.sh "${CI_DIR}"/test/*.sh
+      - name: Locks
+        run: bash -c 'source "${CI_DIR}/hack/lib.sh" && carries_inventory "${CI_DIR}/carries.lock" >/dev/null && replaces_inventory "${CI_DIR}/replaces.lock" >/dev/null'
       - name: Fork sync
         run: '"${CI_DIR}/test/test-fork-sync.sh"'
       - name: Replaces

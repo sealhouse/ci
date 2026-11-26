@@ -25,7 +25,7 @@ g remote add origin "${base}/${fork}.git"
 g remote add upstream "${upstream}"
 g fetch -q origin "refs/heads/rhtas/main:refs/heads/rhtas/main" "refs/heads/${branch}:refs/heads/${branch}"
 
-FORK_UPSTREAM_BRANCH="${branch}" "${root}/hack/fork-sync.sh" "${work}"
+FORK_NAME="${fork}" FORK_UPSTREAM_BRANCH="${branch}" "${root}/hack/fork-sync.sh" "${work}"
 
 # The mirror, and the upstream tags that version the fork's images and releases.
 g fetch -q --tags upstream

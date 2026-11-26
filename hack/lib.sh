@@ -58,6 +58,28 @@ replaces_inventory() {
   [ -z "${entries}" ] || echo "${entries}"
 }
 
+# carries_inventory [FILE] prints carries.lock's entries, from main by default.
+carries_inventory() {
+  local entries ref=main fork pr head action target extra
+  if [ $# -eq 1 ] || [ -n "${SEALHOUSE_CARRIES:-}" ]; then
+    entries="$(grep -vE '^\s*(#|$)' "${1:-${SEALHOUSE_CARRIES}}" || true)"
+  else
+    git -C "${ci_root}" rev-parse -q --verify refs/heads/main >/dev/null || ref=origin/main
+    entries="$(git -C "${ci_root}" show "${ref}:carries.lock" | grep -vE '^\s*(#|$)' || true)"
+  fi
+  while read -r fork pr head action target extra; do
+    [ -n "${fork}" ] || continue
+    if [[ ! "${pr}" =~ ^[0-9]+$ || ! "${head}" =~ ^[0-9a-f]{40}$ ]] || [ -n "${extra}" ] ||
+      { [ "${action}" != replaced-by ] && [ -n "${target}" ]; } ||
+      { [ "${action}" = replaced-by ] && [[ ! "${target}" =~ ^[0-9]+$ ]]; } ||
+      [[ ! "${action}" =~ ^(|remove|replaced-by)$ ]]; then
+      echo "carries.lock: bad line: ${fork} ${pr} ${head} ${action} ${target} ${extra}" >&2
+      return 1
+    fi
+  done <<<"${entries}"
+  [ -z "${entries}" ] || echo "${entries}"
+}
+
 # ci_pin CALLER WORKFLOW prints the ci commit CALLER pins WORKFLOW at.
 ci_pin() {
   local caller="$1" workflow="$2" ref pinned

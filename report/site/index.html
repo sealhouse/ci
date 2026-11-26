@@ -128,7 +128,7 @@
     </section>
     <section class="card">
       <h2>Current carries</h2>
-      <p class="small">The commits each fork keeps on top of upstream, which every sync replays, as of the latest report. Carries stay; drops are regenerated or dropped once upstream has them; upstream PRs are picked early. A sync keeps only the newest ci pin, so pins above one are left over from before the fork's last sync.</p>
+      <p class="small">The commits each fork keeps on top of upstream, which every sync replays, as of the latest report. Carries stay; drops are regenerated or dropped once upstream has them; upstream PRs are picked early, each with a carries.lock line in ci; one to look at has merged, closed or changed upstream since it was carried, or its line removes or replaces it. A sync keeps only the newest ci pin, so pins above one are left over from before the fork's last sync.</p>
       <div class="scroll" id="carries"></div>
       <details><summary>Every carry</summary><div class="scroll" id="carries-table"></div></details>
     </section>
