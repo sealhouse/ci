@@ -80,6 +80,16 @@ A fork's fix is a `<drop>` carry with `Go-Get` trailers, which each sync redoes 
 
 A fix bakes first: ci takes it once its release, or for Go's own fixes the Go release, is `DAYS` old in `vulns.lock`, 7 by default. Until then the PR, the Go watch and the bump gate all wait. A vulnerability `vulns.lock` names is taken as soon as its fix is out.
 
+### An upstream PR in a fork
+
+A fork carries an upstream PR that has not been released as an `UPSTREAM: <N>: <subject>` commit, one commit per PR, with a line in ci's `carries.lock`: `<fork> <N> <head>`, the PR head it was taken from. The PR lane refuses a carry without its line, so the line merges on ci first. Each sync replays the carry and asks upstream about the PR:
+
+- merged into the commit being synced, the replay should come out empty and the carry drops; if it still changes something, or conflicts, that fork's sync stops;
+- `<fork> <N> <head> remove` drops the carry from the next sync, for a PR upstream merged differently or one no longer wanted;
+- a fork PR with a later `UPSTREAM: <N>:` commit, the delta to the PR's new head, folds into the carry; `replaced-by <M>` on `<N>`'s line folds `<N>`'s carry into `<M>`'s.
+
+A sync notes a `carries.lock` line whose carry has gone, for its PR to delete. The report shows each carried PR's state upstream, and links the changes since the carried head.
+
 ## Workflows
 
 | Workflow | Trigger | Acts as |

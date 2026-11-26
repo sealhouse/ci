@@ -81,6 +81,10 @@ lib="${t}/w/sigstore-go"
 git init -q -b rhtas/main "${lib}"
 git -C "${lib}" fetch -q "${up}" "${u3}"
 git -C "${lib}" reset -q --hard "${u3}"
+# Its carries of upstream PRs: #7 open as carried, #8 merged since, at a new head, and #9, whose lookup fails.
+p7="$(commit "${lib}" "$(at '-4 days')" "UPSTREAM: 7: seven")"
+p8="$(commit "${lib}" "$(at '-4 days')" "UPSTREAM: 8: eight")"
+p9="$(commit "${lib}" "$(at '-4 days')" "UPSTREAM: 9: nine")"
 bare "${lib}" "${gitroot}/sealhouse/sigstore-go.git" rhtas/main
 printf 'timestamp-authority file://%s main\nsigstore-go file://%s main\n' "${t}/up/tsa.git" "${t}/up/tsa.git" >"${t}/forks.lock"
 export REPORT_FORKS="${t}/forks.lock"
@@ -113,6 +117,9 @@ bare "${cat_dir}" "${gitroot}/sealhouse/pqc-catalog.git" main
 # ci, with the soak and vulnerability trend branches.
 ci_dir="${t}/w/ci"
 git init -q -b main "${ci_dir}"
+printf '# <fork> <upstream PR> <carried head> [remove | replaced-by <PR>]\nsigstore-go 7 %s\nsigstore-go 8 %s remove\nsigstore-go 9 %s replaced-by 10\n' \
+  "$(printf '7%.0s' {1..40})" "$(printf '8%.0s' {1..40})" "$(printf '9%.0s' {1..40})" >"${ci_dir}/carries.lock"
+git -C "${ci_dir}" add carries.lock
 commit "${ci_dir}" "$(at '-30 days')" "ci" >/dev/null
 git -C "${ci_dir}" switch -q -c soak-trend
 printf 'date\tcommit\tcsv\tgoroutines\theap_mib\tsys_mib\tkills\tresult\n%s\tabc\top.v0.1.0-alpha.1\t139\t12.5\t30.1\t14\tpass\n%s\tdef\top.v0.1.0-alpha.2\t141\t12.9\t30.0\t15\tpass\n' \
@@ -173,6 +180,9 @@ export REPORT_RUN_ID=77 REPORT_RUN_URL=https://github.example/runs/77 REPORT_CI=
 
 out="${t}/out"
 mkdir -p "${out}"
+state "$(jq -nc --arg h7 "$(printf '7%.0s' {1..40})" '{upstream_pulls: {"up/tsa#7": {state: "open", draft: false, merged: false, head: {sha: $h7}},
+  "up/tsa#8": {state: "closed", merged: true, head: {sha: "a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8"}, html_url: "https://github.example/up/tsa/pull/8"}},
+  fail_paths: ["^/repos/up/tsa/pulls/9$"]}')"
 "${hack}/report-collect.sh" "${day}" "${out}/${day}.json"
 r="${out}/${day}.json"
 jq -e '.schema == 1 and .status == "ok" and .partial == false and .date == "2026-03-10" and .window == {from: "2026-03-10T00:00:00Z", to: "2026-03-11T00:00:00Z"}
@@ -212,10 +222,17 @@ jq -e '.snapshot.alpha == "op.v0.1.0-alpha.2" and .snapshot.behind == [
   {repo: "sigstore-go", behind: 0, oldest_at: null}, {repo: "timestamp-authority", behind: 1, oldest_at: "2026-03-11T06:00:00Z"}]
   and ([.snapshot.open_prs[] | "\(.repo)#\(.pr) \(.kind)"] == ["secure-sign-pqc-operator#6 bump"])' "${r}" >/dev/null ||
   fail "snapshot: $(jq -c .snapshot "${r}")"
-jq -e --arg k "${k}" '.snapshot.carries == [{repo: "sigstore-go", commits: []},
-  {repo: "timestamp-authority", commits: [{sha: $k, at: "2026-03-10T02:00:00Z", label: "drop", title: "Pin ci"}]}]' "${r}" >/dev/null ||
+jq -e --arg k "${k}" --arg p7 "${p7}" --arg p8 "${p8}" --arg p9 "${p9}" --arg h7 "$(printf '7%.0s' {1..40})" --arg h8 "$(printf '8%.0s' {1..40})" \
+  --arg h9 "$(printf '9%.0s' {1..40})" '.snapshot.carries == [{repo: "sigstore-go", commits: [
+    {sha: $p7, at: "2026-03-06T00:00:00Z", label: "7", title: "seven", pr: {state: "open", head: $h7, url: "https://github.com/up/tsa/pull/7",
+      number: 7, carried: $h7, action: null, replaced_by: null, changed: false}},
+    {sha: $p8, at: "2026-03-06T00:00:00Z", label: "8", title: "eight", pr: {state: "merged", head: "a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8",
+      url: "https://github.example/up/tsa/pull/8", number: 8, carried: $h8, action: "remove", replaced_by: null, changed: true}},
+    {sha: $p9, at: "2026-03-06T00:00:00Z", label: "9", title: "nine", pr: {state: "unknown", head: null, url: "https://github.com/up/tsa/pull/9",
+      number: 9, carried: $h9, action: "replaced-by", replaced_by: 10, changed: false}}]},
+  {repo: "timestamp-authority", commits: [{sha: $k, at: "2026-03-10T02:00:00Z", label: "drop", title: "Pin ci", pr: null}]}]' "${r}" >/dev/null ||
   fail "carries: $(jq -c .snapshot.carries "${r}")"
-ok "the snapshot has each fork's waiting upstream commits, current carries and the open PRs"
+ok "the snapshot has each fork's waiting upstream commits, current carries with their upstream PRs, and the open PRs"
 
 REPORT_RUN_ID=78 REPORT_NOW=2026-03-12T01:00:00Z "${hack}/report-collect.sh" "${day}" "${out}/again.json"
 cmp <(jq -S 'del(.run, .snapshot)' "${r}") <(jq -S 'del(.run, .snapshot)' "${out}/again.json") || fail "a rerun differs"
@@ -282,7 +299,7 @@ jq -e '.incidents == [
    to: "2026-03-10T16:30:00Z", hours: 1.5, run: "https://github.example/runs/920"}]' "${ru}" >/dev/null || fail "incidents: $(jq -c .incidents "${ru}")"
 ok "a failed step recovers only when it passes again, not at a run that skips it; a failure without a failed step recovers at the next green run"
 jq -e '.vulns == [{date: "2026-03-10", fix: 2, baking: 1, nofix: 1, repos: 2}] and (.nightly[0].jobs == {"kind (1.33)": "success", soak: "skipped", vulns: "success"})
-  and (.behind | length == 2) and .alpha == "op.v0.1.0-alpha.2" and ([.carries[] | "\(.repo) \(.commits | length)"] == ["sigstore-go 0", "timestamp-authority 1"])' "${ru}" >/dev/null ||
+  and (.behind | length == 2) and .alpha == "op.v0.1.0-alpha.2" and ([.carries[] | "\(.repo) \(.commits | length)"] == ["sigstore-go 3", "timestamp-authority 1"])' "${ru}" >/dev/null ||
   fail "series: $(jq -c '[.vulns, .nightly, .behind, .carries]' "${ru}")"
 ok "the vulnerability series, with a fix due that night fixable, a later one baking and one recorded before due counted fixable; the nightly and waiting-commit series, and the latest carries"
 jq '.vulns = [.vulns[0] | .date = "2026-03-10T01:00:00Z" | .repo = "early" | .osv = "GO-2026-0009" | .fixed = "v2" | .due = "2026-03-01"]

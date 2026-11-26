@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""fake-github.py PORT LOG: the GitHub API calls ci's scripts make, for test-github.sh and test-report.sh."""
+"""fake-github.py PORT LOG: the GitHub API calls ci's scripts make, for test-github.sh, test-report.sh and test-fork-sync.sh."""
 import base64, json, re, sys
 from urllib.parse import parse_qs, urlsplit
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -67,6 +67,9 @@ class H(BaseHTTPRequestHandler):
             return self.reply(200, {"data": {}})
         m = re.match(r"/repos/([^/]+/[^/]+)(/.*)$", p)
         repo, rest = m.group(1).split("/")[1], m.group(2)
+        up = re.match(r"/pulls/(\d+)$", rest)
+        if method == "GET" and up and f"{m.group(1)}#{up.group(1)}" in state.get("upstream_pulls", {}):
+            return self.reply(200, state["upstream_pulls"][f"{m.group(1)}#{up.group(1)}"])
         wf = re.match(r"/actions/workflows/([^/]+)/runs$", rest)
         if method == "GET" and wf and q.get("created", [""])[0].startswith(">="):
             since, event = q["created"][0][2:], q.get("event", [None])[0]

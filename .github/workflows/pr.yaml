@@ -67,6 +67,7 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          FORK_NAME: ${{ github.event.repository.name }}
         run: |
           FORK_BRANCH=HEAD "${CI_DIR}/hack/fork-sync.sh" --check --since "${BASE_SHA}" .
           # A squash merge keeps the UPSTREAM label only from a lone commit; bots set their own title.

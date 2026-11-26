@@ -212,13 +212,32 @@ trend() {
 soak="$(trend soak-trend soak-trend.tsv)"
 vulns="$(trend vuln-trend vuln-trend.tsv)"
 
+# pull_state SLUG N FORK prints upstream PR N's state, beside the head carries.lock says FORK carries.
+carry_lock="$(git -C "${work}/ci" show HEAD:carries.lock 2>/dev/null | grep -vE '^\s*(#|$)' || true)"
+pull_state() {
+  local slug="$1" n="$2" carried action target got pr
+  read -r carried action target < <(awk -v f="$3" -v p="${n}" '$1 == f && $2 == p { print $3, $4, $5 }' <<<"${carry_lock}"; echo)
+  if got="$(gh_api GET "/repos/${slug}/pulls/${n}" 2>/dev/null)"; then
+    pr="$(jq -c '{state: (if .merged then "merged" elif .state == "closed" then "closed" elif .draft then "draft" else "open" end),
+      head: .head.sha, url: .html_url}' <<<"${got}")"
+  else
+    pr='{"state": "unknown", "head": null, "url": null}'
+  fi
+  jq -nc --argjson pr "${pr}" --arg n "${n}" --arg slug "${slug}" --arg carried "${carried:-}" --arg action "${action:-}" --arg target "${target:-}" "${nz}"'
+    $pr + {number: ($n | tonumber), url: ($pr.url // "https://github.com/\($slug)/pull/\($n)"), carried: ($carried | nz),
+      action: ($action | nz), replaced_by: ($target | nz | if . then tonumber else null end),
+      changed: ($carried != "" and $pr.head != null and $pr.head != $carried)}'
+}
+
 # A snapshot of now, which a rerun cannot reproduce.
 : >"${j}/behind"
 : >"${j}/carries"
 for f in "${forks[@]}"; do
   dir="${work}/${f}"
-  # The carries the next sync replays, as fork-sync lists them.
-  read -r _ _ branch < <(awk -v f="${f}" '$1 == f' "${forks_lock}")
+  # The carries the next sync replays, as fork-sync lists them, with the upstream PR each one carries.
+  read -r _ url branch < <(awk -v f="${f}" '$1 == f' "${forks_lock}")
+  url="${url%/}"
+  slug="$(awk -F'[/:]' '{ print $(NF - 1) "/" $NF }' <<<"${url%.git}")"
   git -C "${dir}" update-ref "refs/remotes/upstream/${branch}" refs/upstream/head
   list="$(FORK_UPSTREAM_BRANCH="${branch}" "${root}/hack/fork-sync.sh" --list "${dir}")"
   while read -r short _; do
@@ -226,7 +245,12 @@ for f in "${forks[@]}"; do
     git -C "${dir}" log -1 --format='%H%x09%at%x09%s' "${short}"
   done <<<"${list}" | jq -Rsc --arg r "${f}" '{repo: $r, commits: [split("\n")[] | select(. != "") | split("\t") |
     (.[2] | capture("^UPSTREAM: (?<label><carry>|<drop>|[0-9]+): (?<title>.*)$") // {label: null, title: .}) as $s |
-    {sha: .[0], at: (.[1] | tonumber | todate), label: ($s.label | if . then ltrimstr("<") | rtrimstr(">") else null end), title: $s.title}]}' >>"${j}/carries"
+    {sha: .[0], at: (.[1] | tonumber | todate), label: ($s.label | if . then ltrimstr("<") | rtrimstr(">") else null end), title: $s.title}]}' >"${j}/fork-carries"
+  pulls='{}'
+  for n in $(jq -r '[.commits[].label | select(. != null and test("^[0-9]+$"))] | unique[]' "${j}/fork-carries"); do
+    pulls="$(jq -c --arg n "${n}" --argjson pr "$(pull_state "${slug}" "${n}" "${f}")" '. + {($n): $pr}' <<<"${pulls}")"
+  done
+  jq -c --argjson pulls "${pulls}" '.commits |= map(. + {pr: (if .label then $pulls[.label] else null end)})' "${j}/fork-carries" >>"${j}/carries"
   have="$(upstream_of "${dir}" rhtas/main)"
   times="$(git -C "${dir}" log --format=%ct refs/upstream/head ${have:+"^${have}"})"
   jq -nc --arg r "${f}" --arg t "${times}" '($t | split("\n") | map(select(. != "") | tonumber)) as $s |

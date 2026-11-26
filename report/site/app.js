@@ -400,15 +400,26 @@ function carries() {
   if (!forks.length) return empty($("carries"), "Appears after the first report.");
   const pin = (c) => c.label === "drop" && /^Pin ci\b/.test(c.title);
   const n = (f, test) => f.commits.filter(test).length;
-  table($("carries"), ["Fork", "Carries", "Other drops", "Upstream PRs", "Pins", "Oldest carry"], forks.map((f) => {
+  const look = (c) => c.pr && (c.pr.state !== "open" && c.pr.state !== "draft" || c.pr.changed || c.pr.action || !c.pr.carried);
+  table($("carries"), ["Fork", "Carries", "Other drops", "Upstream PRs", "PRs to look at", "Pins", "Oldest carry"], forks.map((f) => {
     const kept = f.commits.filter((c) => !pin(c));
     const oldest = kept.reduce((m, c) => (!m || c.at < m ? c.at : m), null);
     return [link(`${ORG}/${f.repo}/commits/rhtas/main`, f.repo), n(f, (c) => c.label === "carry"), n(f, (c) => c.label === "drop" && !pin(c)),
-      n(f, (c) => /^[0-9]+$/.test(c.label || "")), n(f, pin), oldest ? dateIn(oldest) : "–"];
-  }), [1, 2, 3, 4]);
-  table($("carries-table"), ["Fork", "Commit", "Kind", "Subject", "Written"], forks.flatMap((f) => f.commits.map((c, i) =>
+      n(f, (c) => /^[0-9]+$/.test(c.label || "")), n(f, look), n(f, pin), oldest ? dateIn(oldest) : "–"];
+  }), [1, 2, 3, 4, 5]);
+  const upstream = (pr) => {
+    if (!pr) return "–";
+    const notes = [pr.state];
+    if (pr.action === "remove") notes.push("removed in carries.lock");
+    if (pr.action === "replaced-by") notes.push(`replaced by #${pr.replaced_by}`);
+    if (!pr.carried) notes.push("no carries.lock line");
+    const cell = el("span", {}, link(pr.url, `#${pr.number}`), ` ${notes.join(", ")}`);
+    if (pr.changed) cell.append(" · ", link(`${pr.url.replace(/\/pull\/[0-9]+$/, "")}/compare/${pr.carried}...${pr.head}`, "changed since carried"));
+    return cell;
+  };
+  table($("carries-table"), ["Fork", "Commit", "Kind", "Subject", "Upstream PR", "Written"], forks.flatMap((f) => f.commits.map((c, i) =>
     [i === 0 ? f.repo : "", link(`${ORG}/${f.repo}/commit/${c.sha}`, c.sha.slice(0, 12)),
-      c.label == null ? "unlabelled" : /^[0-9]+$/.test(c.label) ? `upstream #${c.label}` : c.label, c.title, dateIn(c.at)])), [], [3]);
+      c.label == null ? "unlabelled" : /^[0-9]+$/.test(c.label) ? `upstream #${c.label}` : c.label, c.title, upstream(c.pr), dateIn(c.at)])), [], [3, 4]);
 }
 
 async function dayview(date) {

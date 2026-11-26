@@ -1,0 +1,5 @@
+# <fork> <upstream PR> <carried head> [remove | replaced-by <PR>]
+go-oidc 507 7704c241dfcbead15b95ada0264348316c90a40c
+sigstore-go 713 d8c669eef04517d5c19ce8bf41f3c9c1946e341e
+sigstore-go 714 34b4388bba26059ffb8371dfd90b29d0e9438302
+sigstore-go 715 9d01ec05e03805d93370f12abf254c896bbc72c8
