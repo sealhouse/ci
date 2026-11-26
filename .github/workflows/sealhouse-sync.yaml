@@ -28,6 +28,7 @@ jobs:
       SYNC_APP_KEY: ${{ secrets.SEALHOUSE_SYNC_APP_KEY }}
     steps:
       - name: Scripts
+        id: scripts
         run: |
           git clone -q "https://github.com/${GITHUB_REPOSITORY}.git" ci
           git -C ci checkout -q --detach "${GITHUB_SHA}"
@@ -49,8 +50,9 @@ jobs:
           if grep -q ': rhtas/main is ' "${RUNNER_TEMP}/finished" 2>/dev/null; then
             gh workflow run sealhouse-bump-update.yaml -R "${GITHUB_REPOSITORY}"
           fi
+      # A sync PR that needs a maintainer holds back only its own fork.
       - name: Start syncs
-        if: ${{ !inputs.finish }}
+        if: ${{ !cancelled() && !inputs.finish && steps.scripts.outcome == 'success' }}
         run: |
           failed=0
           while read -r fork upstream branch; do
