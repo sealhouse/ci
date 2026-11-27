@@ -73,9 +73,13 @@ while read -r number ref sha author; do
   fi
   bad="$(jq -r '[.[] | select(.conclusion != "success" and .conclusion != "skipped") | .name] | join(", ")' <<<"${checks}")"
   if [ -n "${bad}" ]; then
-    if [ "${base}" = rhtas/main ] && replace_retry "${full}" "${base}" "${sha}" "${checks}"; then
-      echo "${repo}: PR ${number} (${ref}) failed only for a replace ${base} has since taken"
-      [ -n "${stale}" ] || stale="${number} ${sha} ${ref}"
+    if replace_retry "${full}" "${base}" "${sha}" "${checks}"; then
+      if [ "${base}" = rhtas/main ]; then
+        echo "${repo}: PR ${number} (${ref}) failed only for a replace ${base} has since taken"
+        [ -n "${stale}" ] || stale="${number} ${sha} ${ref}"
+      else
+        echo "${repo}: PR ${number} (${ref}) failed only for a replace ${base} has since taken: bump-update.sh tries it again"
+      fi
     else
       echo "${repo}: PR ${number} (${ref}) needs a maintainer: ${bad}"
     fi
