@@ -16,18 +16,18 @@ flowchart LR
   syncpr -->|"PR lane green<br/>sealhouse-sync fast-forwards"| rhtas["fork rhtas/main"]
   rhtas -->|merge lane| image[("fork image<br/>ghcr.io")]
   image -->|sealhouse-bump| bumppr(["operator bump PR<br/>images.env"])
-  update["sealhouse-bump-update"] -.->|update branch| bumppr
-  bumppr --> review{{"maintainer review"}}
-  review -->|auto-merge| opmain["operator main"]
+  update["sealhouse-bump-update"] -.->|rebuild on main| bumppr
+  bumppr -->|"sealhouse-bump-update: bot-merge.sh<br/>green, bot-signed, its image's digest only"| opmain["operator main"]
   opmain -->|"merge lane<br/>upgrade test"| alpha[("pqc-catalog:alpha")]
   alpha -->|sealhouse-catalog| record[("pqc-catalog repo<br/>alpha/head.env")]
   alpha -.->|"sealhouse-nightly<br/>08:40"| nightly["e2e, soak, scans"]
 
   classDef gate fill:#fde2e1,stroke:#c0392b,color:#000
   classDef pr fill:#e8f0fe,stroke:#1a73e8,color:#000
-  class review gate
   class syncpr,bumppr pr
 ```
+
+Bumps go one at a time, each rebuilt on the operator's main when main moves, so a bump of one image never conflicts with another's. A red bump waits for a maintainer and holds no other; a newer image closes the older bump of the same image.
 
 ### A ci change
 

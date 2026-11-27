@@ -115,8 +115,8 @@ bump() { printf '{"number": %s, "node_id": "x", "head": {"ref": "%s", "sha": "%s
 green='[{"name": "pr / pr", "status": "completed", "conclusion": "success"}]'
 running='[{"name": "pr / pr", "status": "in_progress", "conclusion": null}]'
 red='[{"name": "pr / pr", "status": "completed", "conclusion": "failure"}]'
-bumps="[$(bump 2 bump/2.0-b-image-bbb sha2), $(bump 1 bump/2.0-a-image-aaa sha1), $(bump 3 feature sha3)]"
-behind='{"bump/2.0-a-image-aaa": 2, "bump/2.0-b-image-bbb": 1, "feature": 9}'
+bumps="[$(bump 2 ci-pin/bbb sha2), $(bump 1 ci-pin/aaa sha1), $(bump 3 feature sha3)]"
+behind='{"ci-pin/aaa": 2, "ci-pin/bbb": 1, "feature": 9}'
 update_with() { # CHECKS_BY_SHA BEHIND
   state "{\"pulls\": ${bumps}, \"checks\": [], \"checks_by_sha\": $1, \"behind\": $2}"
   reset_log
@@ -126,9 +126,9 @@ update_with "{\"sha1\": ${green}, \"sha2\": ${green}, \"sha3\": ${green}}" "${be
 calls POST access_tokens | jq -e '.body.permissions.checks == "read"' >/dev/null || fail "bump-update cannot read checks"
 calls PUT 'pulls/1/update-branch$' | jq -e '.body.expected_head_sha == "sha1"' >/dev/null || fail "oldest bump PR not updated"
 [ "$(calls PUT update-branch | wc -l)" -eq 1 ] || fail "updated more than one PR"
-ok "bump-update updates only the oldest bump PR behind main"
+ok "bump-update updates only the oldest PR behind main"
 
-update_with "{\"sha1\": ${running}, \"sha2\": ${green}}" '{"bump/2.0-b-image-bbb": 1}'
+update_with "{\"sha1\": ${running}, \"sha2\": ${green}}" '{"ci-pin/bbb": 1}'
 [ -z "$(calls PUT update-branch)" ] || fail "updated a PR while another runs its checks"
 grep -q 'PR 1 .*waiting' "${t}/out" || fail "running checks must wait"
 update_with "{\"sha2\": ${green}}" "${behind}"
@@ -144,7 +144,7 @@ calls PUT 'pulls/2/update-branch$' | jq -e '.body.expected_head_sha == "sha2"' >
 grep -q 'PR 1 .*needs a maintainer: pr / pr' "${t}/out" || fail "failed PR not reported"
 ok "bump-update skips a failed PR"
 
-update_with "{\"sha1\": ${green}, \"sha2\": ${green}}" '{"bump/2.0-b-image-bbb": 1}'
+update_with "{\"sha1\": ${green}, \"sha2\": ${green}}" '{"ci-pin/bbb": 1}'
 calls PUT 'pulls/2/update-branch$' | grep -q . || fail "a current green PR blocked the next"
 update_with "{\"sha1\": ${green}, \"sha2\": ${green}}" '{}'
 [ -z "$(calls PUT update-branch)" ] || fail "updated a current PR"
@@ -156,6 +156,51 @@ reset_log
 calls PUT 'pulls/4/update-branch$' | grep -q . || fail "ci-pin PR not updated"
 calls POST access_tokens | jq -e '.body.permissions.workflows == "write"' >/dev/null || fail "main can carry workflow changes"
 ok "bump-update also takes ci-pin PRs"
+
+update_with "{\"sha1\": ${green}, \"sha2\": ${green}}" "${behind}" || true
+state '{"fail_paths": ["pulls/1/update-branch$"]}'
+reset_log
+"${hack}/bump-update.sh" >"${t}/out" || fail "a refused update stopped bump-update"
+state '{"fail_paths": []}'
+grep -q 'PR 1 .*could not be updated' "${t}/out" || fail "a refused update not reported"
+calls PUT 'pulls/2/update-branch$' | grep -q . || fail "a refused update blocked the next PR"
+ok "bump-update reports a PR GitHub will not update, and goes on to the next"
+
+# Bumps of two images, on neighbouring lines, and a bump left behind by a newer one of the same image.
+h12="aaaaaaaaaaaa" i12="bbbbbbbbbbbb" d64="$(printf 'c%.0s' {1..64})" e64="$(printf 'e%.0s' {1..64})"
+main_env=$'# Pins.\nTSA_IMAGE=ghcr.io/sealhouse/tsa@sha256:new\nFULCIO_IMAGE=ghcr.io/sealhouse/fulcio@sha256:old\n'
+tsa_pr="$(jq -nc --arg r "bump/2.0-tsa-image-${h12}" '{number: 11, node_id: "x", title: "Bump the 2.0 tsa image to timestamp-authority rhtas/main aaaaaaaaaaaa", head: {ref: $r, sha: "shaT"}}')"
+ful_pr="$(jq -nc --arg r "bump/2.0-fulcio-image-${i12}" '{number: 12, node_id: "x", title: "Bump the 2.0 fulcio image to fulcio rhtas/main bbbbbbbbbbbb", head: {ref: $r, sha: "shaF"}}')"
+rebuild_with() { # PULLS FILES_AT BEHIND
+  state "$(jq -nc --argjson p "$1" --argjson f "$2" --argjson b "$3" --argjson g "${green}" --arg m "${main_env}" \
+    '{pulls: $p, files_at: ({main: {"versions/2.0/images.env": $m}} + $f), checks: [], checks_by_sha: {shaT: $g, shaF: $g}, behind: $b}')"
+  reset_log
+  "${hack}/bump-update.sh" >"${t}/out" || fail "bump-update failed: $(cat "${t}/out")"
+}
+rebuild_with "[${ful_pr}]" "$(jq -nc --arg e "# Pins.
+TSA_IMAGE=ghcr.io/sealhouse/tsa@sha256:old
+FULCIO_IMAGE=ghcr.io/sealhouse/fulcio@sha256:${d64}
+" '{shaF: {"versions/2.0/images.env": $e}}')" "{\"bump/2.0-fulcio-image-${i12}\": 1}"
+[ -z "$(calls PUT update-branch)" ] || fail "a bump was merged with main, not rebuilt"
+calls POST /git/blobs | jq -j .body.content | diff - <(printf '# Pins.\nTSA_IMAGE=ghcr.io/sealhouse/tsa@sha256:new\nFULCIO_IMAGE=ghcr.io/sealhouse/fulcio@sha256:%s\n' "${d64}") >/dev/null ||
+  fail "the rebuilt bump is not main with its image line: $(calls POST /git/blobs | jq -r .body.content)"
+calls POST /git/commits | jq -e '.body.parents == ["'"$(printf 'a%.0s' {1..40})"'"] and (.body.message | startswith("Bump the 2.0 fulcio image"))' >/dev/null || fail "the rebuilt bump is not on main"
+calls PATCH "git/refs/heads/bump/2.0-fulcio-image-${i12}$" | jq -e '.body.force == true and (.body.sha | length) == 40' >/dev/null || fail "the bump branch was not moved"
+ok "bump-update rebuilds a bump on main, keeping main's other image, instead of merging the neighbouring line"
+
+rebuild_with "[${tsa_pr}, ${ful_pr}]" "$(jq -nc --arg e "TSA_IMAGE=ghcr.io/sealhouse/tsa@sha256:new
+" '{shaT: {"versions/2.0/images.env": $e}}')" "{\"bump/2.0-tsa-image-${h12}\": 1, \"bump/2.0-fulcio-image-${i12}\": 1}"
+calls PATCH 'pulls/11$' | jq -e '.body.state == "closed"' >/dev/null || fail "a bump main already has was left open"
+calls DELETE "git/refs/heads/bump/2.0-tsa-image-${h12}$" | grep -q . || fail "a bump main already has kept its branch"
+[ -z "$(calls POST /git/commits)" ] || fail "rebuilt a bump main already has"
+ok "bump-update closes a bump whose image main already pins"
+
+rebuild_with "[${tsa_pr}, ${ful_pr}]" "$(jq -nc --arg e "FULCIO_IMAGE=ghcr.io/sealhouse/fulcio@sha256:${d64}
+" '{shaF: {"versions/2.0/images.env": $e}}')" "{\"bump/2.0-tsa-image-${h12}\": 1, \"bump/2.0-fulcio-image-${i12}\": 1}"
+grep -q 'PR 11 .*could not be rebuilt on main' "${t}/out" || fail "a bump that cannot be rebuilt not reported"
+calls PATCH "git/refs/heads/bump/2.0-fulcio-image-${i12}$" | grep -q . || fail "a bump that cannot be rebuilt blocked the next"
+ok "bump-update reports a bump it cannot rebuild, and goes on to the next"
+state '{"files_at": {}}'
 
 # bot-merge.
 p40="$(printf 'd%.0s' {1..40})" o40="$(printf 'e%.0s' {1..40})" x40="$(printf 'f%.0s' {1..40})"
@@ -187,7 +232,40 @@ calls PUT 'pulls/10/merge$' | jq -e '.body == {merge_method: "squash", sha: "sha
   fail "vulns merge keeps its trailer"
 [ -z "$(calls PUT 'pulls/(7|8)/merge$')" ] || fail "merged a bump or someone else's PR"
 grep -q 'PR 8 (ci-pin/xyz) is not from' "${t}/out" || fail "someone else's PR not reported"
-ok "bot-merge squashes green ci-pin, replaces and vulns PRs from the bot, keeping their trailers, and leaves bumps alone"
+ok "bot-merge squashes green ci-pin, replaces and vulns PRs from the bot, keeping their trailers, and leaves a bump with no image change alone"
+
+envfile() { # FILE KEY OLD NEW [EXTRA_LINE]
+  jq -nc --arg f "$1" --arg k "$2" --arg o "$3" --arg n "$4" --arg x "${5:-}" '{filename: $f, status: "modified",
+    patch: ("@@ -1,3 +1,3 @@\n # Pins.\n-\($k)=\($o)\n+\($k)=\($n)" + (if $x == "" then "" else "\n+" + $x end))}'
+}
+d64="$(printf 'c%.0s' {1..64})"
+bump_ref="bump/2.0-rekor-tiles-image-aaaaaaaaaaaa"
+new_img="${registry}/sealhouse/rekor-tiles@sha256:${d64}"
+bump_with() { # FILES [RED]
+  merge_with "[$(botpr 7 "${bump_ref}" 'sealhouse-bot[bot]'), $(botpr 5 bump/2.0-tsa-image-bbbbbbbbbbbb 'sealhouse-bot[bot]')]" \
+    "$(jq -nc --argjson c "$(signed 'Bump the 2.0 rekor-tiles image to rekor-tiles rhtas/main aaaaaaaaaaaa')" --argjson f "$1" --argjson r "${red}" --arg red "${2:-}" \
+      '{pr_commits: {"5": $c, "7": $c}, pr_files: {"5": $f, "7": $f}} + (if $red == "" then {} else {checks_by_sha: {sha5: $r}} end)')"
+}
+good_bump="[$(envfile versions/2.0/images.env REKOR_TILES_IMAGE ghcr.io/sealhouse/rekor-tiles@sha256:old "${new_img}")]"
+bump_with "${good_bump}" red
+calls PUT 'pulls/7/merge$' | jq -e '.body == {merge_method: "squash", sha: "sha7", commit_title: "Bump the 2.0 rekor-tiles image to rekor-tiles rhtas/main aaaaaaaaaaaa", commit_message: ""}' >/dev/null ||
+  fail "a green bump that only moves its image was not merged: $(cat "${t}/out")"
+[ -z "$(calls PUT 'pulls/5/merge$')" ] || fail "merged a red bump"
+grep -q 'PR 5 .*needs a maintainer: pr / pr' "${t}/out" || fail "a red bump not reported"
+ok "bot-merge squashes a green bump that only moves its image's digest, past a red bump of another image"
+for bad in \
+  "[$(envfile versions/2.0/images.env TSA_IMAGE ghcr.io/sealhouse/tsa@sha256:old "${registry}/sealhouse/tsa@sha256:${d64}")]" \
+  "[$(envfile versions/2.0/images.env REKOR_TILES_IMAGE ghcr.io/sealhouse/rekor-tiles@sha256:old "${registry}/sealhouse/other@sha256:${d64}")]" \
+  "[$(envfile versions/2.0/images.env REKOR_TILES_IMAGE ghcr.io/sealhouse/rekor-tiles@sha256:old "evil.example/rekor-tiles@sha256:${d64}")]" \
+  "[$(envfile versions/2.0/images.env REKOR_TILES_IMAGE ghcr.io/sealhouse/rekor-tiles@sha256:old "${registry}/sealhouse/rekor-tiles:latest")]" \
+  "[$(envfile versions/2.0/images.env REKOR_TILES_IMAGE ghcr.io/sealhouse/rekor-tiles@sha256:old "${new_img}" "TSA_IMAGE=x")]" \
+  "[$(envfile versions/2.1/images.env REKOR_TILES_IMAGE ghcr.io/sealhouse/rekor-tiles@sha256:old "${new_img}")]" \
+  "$(jq -c '. + [{filename: "main.go", status: "modified"}]' <<<"${good_bump}")"; do
+  bump_with "${bad}"
+  [ -z "$(calls PUT 'pulls/7/merge$')" ] || fail "merged a bump that changes more than its image: ${bad}"
+done
+grep -q "PR 7 (${bump_ref}) changes more than its image's digest" "${t}/out" || fail "a wider bump not reported"
+ok "bot-merge refuses a bump that moves another image, names another registry or image, drops the digest, or changes anything else"
 
 refused() { # NAME PR_COMMITS PR_FILES [EXTRA_STATE]
   merge_with "[$(botpr 4 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]')]" \

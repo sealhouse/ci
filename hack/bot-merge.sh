@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bot-merge.sh [REPO BASE] merges green ci-pin, replaces and vulns PRs that only sealhouse-bot wrote, on every caller or on REPO.
+# bot-merge.sh [REPO BASE] merges green ci-pin, replaces, vulns and bump PRs that only sealhouse-bot wrote, on every caller or on REPO.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -41,6 +41,16 @@ pin_only() {
       (.filename | test("^\\.github/workflows/sealhouse-[a-z-]+\\.yaml$")) and .status == "modified" and moves_pins)' >/dev/null
 }
 
+# bump_only REF reads a PR's files and passes when they only move REF's image to a digest of the image REF names.
+bump_only() {
+  [[ "$1" =~ ^bump/([0-9]+\.[0-9]+)-(([a-z0-9-]+)-image)-[0-9a-f]{12}$ ]] || return 1
+  jq -e --arg f "versions/${BASH_REMATCH[1]}/images.env" --arg k "$(tr 'a-z-' 'A-Z_' <<<"${BASH_REMATCH[2]}")=" \
+    --arg i "${REGISTRY_HOST:-ghcr.io}/${gh_org}/${BASH_REMATCH[3]}@sha256:" '
+    ((.[0].patch // "") | split("\n") | map(select(test("^[-+]")))) as $l |
+    length == 1 and .[0].filename == $f and .[0].status == "modified" and
+      ($l | length) == 2 and ($l[0] | startswith("-" + $k)) and ($l[1] | test("^\\+" + $k + $i + "[0-9a-f]{64}$"))' >/dev/null
+}
+
 while read -r number ref sha author; do
   [ -n "${number}" ] || continue
   if [ "${author}" != "${bot}" ]; then
@@ -72,6 +82,12 @@ while read -r number ref sha author; do
         continue
       fi
       ;;
+    bump/*)
+      if ! bump_only "${ref}" <<<"${files}"; then
+        echo "${repo}: PR ${number} (${ref}) changes more than its image's digest: it needs a maintainer"
+        continue
+      fi
+      ;;
     replaces/* | vulns/*)
       if ! jq -e 'length > 0 and all(.[]; .filename | test("(^|/)go\\.(mod|sum)$"))' <<<"${files}" >/dev/null; then
         echo "${repo}: PR ${number} (${ref}) changes more than go.mod and go.sum: it needs a maintainer"
@@ -88,4 +104,4 @@ while read -r number ref sha author; do
     continue
   fi
   echo "${repo}: merged PR ${number} (${ref})"
-done < <(jq -r '[.[] | select(.head.ref | test("^(ci-pin|replaces|vulns)/"))] | sort_by(.number) | .[] | "\(.number) \(.head.ref) \(.head.sha) \(.user.login)"' <<<"${pulls}")
+done < <(jq -r '[.[] | select(.head.ref | test("^(ci-pin|replaces|vulns|bump)/"))] | sort_by(.number) | .[] | "\(.number) \(.head.ref) \(.head.sha) \(.user.login)"' <<<"${pulls}")
