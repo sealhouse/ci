@@ -151,3 +151,14 @@ date	repo	osv	module	version	fixed	due
 2026-11-26T08:45:31Z	sigstore-go					
 2026-11-26T08:45:31Z	timestamp-authority					
 2026-11-26T08:45:31Z	secure-sign-pqc-operator					
+2026-11-27T08:45:41Z	cosign					
+2026-11-27T08:45:41Z	dex					
+2026-11-27T08:45:41Z	fulcio					
+2026-11-27T08:45:41Z	go-oidc					
+2026-11-27T08:45:41Z	go-tuf					
+2026-11-27T08:45:41Z	protobuf-specs					
+2026-11-27T08:45:41Z	rekor-tiles					
+2026-11-27T08:45:41Z	sigstore					
+2026-11-27T08:45:41Z	sigstore-go					
+2026-11-27T08:45:41Z	timestamp-authority					
+2026-11-27T08:45:41Z	secure-sign-pqc-operator					
