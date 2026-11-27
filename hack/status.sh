@@ -37,7 +37,7 @@ jq '[.[] | select(.workflow == "sealhouse-timer.yaml" and .repo == "ci")]' "${wo
 jq '[.[] | select((.workflow == "sealhouse-timer.yaml" and .repo == "ci") | not)]' "${work}/all-runs.json" >"${work}/runs.json"
 
 # bot-merge.sh merges these once they are green, so they wait on no one.
-age='def selfmerge: .author == "sealhouse-bot" and (.ref | test("^(ci-pin|replaces|vulns)/"));
+age='def selfmerge: .author == "sealhouse-bot" and (.ref | test("^(ci-pin|replaces|vulns|bump)/"));
   def age: (now - (fromdateiso8601)) | if . < 3600 then "\(. / 60 | floor)m" elif . < 172800 then "\(. / 3600 | floor)h" else "\(. / 86400 | floor)d" end;'
 table() { local rows; rows="$(cat)"; if [ -n "${rows}" ]; then column -t -s $'\t' <<<"${rows}" | sed 's/^/  /'; else echo "  none"; fi; }
 

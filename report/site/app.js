@@ -350,7 +350,7 @@ function soak() {
 }
 
 function waitingPrs() {
-  return rollup.open_prs.filter((p) => p.kind === "bump" || p.repo === "ci" || !p.author.endsWith("[bot]"));
+  return rollup.open_prs.filter((p) => p.repo === "ci" || !p.author.endsWith("[bot]"));
 }
 
 function attention() {
