@@ -100,9 +100,12 @@ class H(BaseHTTPRequestHandler):
             listed = [f[len(name) + 1:] for f in state["files"] if f.startswith(name + "/")]
             if listed:
                 return self.reply(200, [{"type": "file", "name": f} for f in listed])
-            if name not in state["files"]:
+            files = state["files"]
+            if state.get("files_at") and "ref" in q:
+                files = state["files_at"].get(q["ref"][0], {})
+            if name not in files:
                 return self.reply(404, {})
-            content = base64.b64encode(state["files"][name].encode()).decode()
+            content = base64.b64encode(files[name].encode()).decode()
             return self.reply(200, {"content": content})
         if method == "GET" and rest.startswith("/git/ref/"):
             if rest[len("/git/ref/"):] in state.get("missing_refs", []):
