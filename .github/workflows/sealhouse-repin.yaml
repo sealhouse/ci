@@ -9,6 +9,7 @@ on:
       - .github/workflows/sealhouse-*.yaml
       - forks.lock
       - replaces.lock
+      - carries.lock
       - vulns.lock
       - schedule.lock
       - README.md
