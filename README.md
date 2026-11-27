@@ -45,6 +45,8 @@ flowchart LR
   class cipr,pinpr,bumppr pr
 ```
 
+A bot PR merges only as tested on the branch it lands on. On a fork, `bot-merge.sh` brings the oldest green bot PR that rhtas/main has moved past up to date, one at a time and only once no other bot PR is running its checks; its lane hands off to the next run, which merges it. On the operator, `bump-update.sh` does this for main.
+
 ### A library fix in a fork
 
 ```mermaid
