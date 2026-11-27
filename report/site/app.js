@@ -367,11 +367,17 @@ function attention() {
   const behind = rollup.behind.filter((b) => b.date === dates[dates.length - 1] && b.behind);
   if (behind.length) item("warning", "!", `${behind.length} fork${behind.length === 1 ? "" : "s"} behind upstream`, "#forks",
     behind.map((b) => `${b.repo} ${b.behind}, oldest ${hoursText(b.age_hours)}`).join(" · "));
+  const reps = rollup.replaces || [];
+  const done = reps.filter((r) => r.condition.released);
+  if (done.length) item("warning", "!", `${done.length} replace${done.length === 1 ? "" : "s"} upstream has released the fix for`, "#forks",
+    done.map((r) => `${r.module} in ${r.condition.released}`).join(" · "));
+  const lag = reps.flatMap((r) => r.consumers.filter((c) => c.state !== "applied").map((c) => `${c.repo} ${r.module}`));
+  if (lag.length) item("warning", "!", `${lag.length} fork replace${lag.length === 1 ? "" : "s"} not on replaces.lock's release`, "#forks", lag.join(" · "));
   const w = waitingPrs().length;
   if (w) item("warning", "!", `${w} pull request${w === 1 ? "" : "s"} waiting on a person, listed below`);
   const gaps = rollup.days.slice(-7).filter((d) => d.status !== "ok").length;
   if (gaps) item("warning", "!", `No good report for ${gaps} of the last 7 days`, null, "see report coverage below");
-  if (!items.length) item("good", "✓", "Nothing needs attention: every failed step has recovered, the last nightly passed, every fork is up to date and no pull request waits on a person.");
+  if (!items.length) item("good", "✓", "Nothing needs attention: every failed step has recovered, the last nightly passed, every fork is up to date and has its replaces, and no pull request waits on a person.");
   $("attention").replaceChildren(...items);
 }
 
@@ -420,6 +426,33 @@ function carries() {
   table($("carries-table"), ["Fork", "Commit", "Kind", "Subject", "Upstream PR", "Written"], forks.flatMap((f) => f.commits.map((c, i) =>
     [i === 0 ? f.repo : "", link(`${ORG}/${f.repo}/commit/${c.sha}`, c.sha.slice(0, 12)),
       c.label == null ? "unlabelled" : /^[0-9]+$/.test(c.label) ? `upstream #${c.label}` : c.label, c.title, upstream(c.pr), dateIn(c.at)])), [], [3, 4]);
+}
+
+function replaces() {
+  const reps = rollup.replaces || [];
+  if (!reps.length) {
+    table($("replaces-table"), [], []);
+    return empty($("replaces"), "ci's replaces.lock has no lines.");
+  }
+  const drop = (r) => {
+    const c = r.condition;
+    if (c.kind !== "pr") return `upstream ≥ ${c.want || r.drop.replace(/^upstream>=/, "")}`;
+    return el("span", {}, "upstream releases ", c.url ? link(c.url, `#${c.number}`) : `#${c.number}`, ` (${c.state})`);
+  };
+  const counts = (r) => {
+    const ok = r.consumers.filter((c) => c.state === "applied").length;
+    const off = r.consumers.filter((c) => c.state !== "applied").map((c) => `${c.repo} ${c.state === "missing" ? "missing" : "on another release"}`);
+    return `${ok} of ${r.consumers.length}${off.length ? `; ${off.join(", ")}` : ""}`;
+  };
+  table($("replaces"), ["Module", "Fork release", "Reason", "Drops when", "Released upstream", "Forks with it"], reps.map((r) =>
+    [r.module, link(`${ORG}/${r.fork_module.split("/")[2]}/tags`, r.version), r.reason, drop(r),
+      r.condition.released ? `${r.condition.released}, its replace can go` : r.condition.state === "unknown" ? "lookup failed" : "not yet", counts(r)]), [], [2, 5]);
+  const open = rollup.open_prs.filter((p) => p.kind === "replaces");
+  $("replaces").append(el("p", { class: "small" }, open.length ? `${open.length} replaces pull request${open.length === 1 ? "" : "s"} open: ` : "No replaces pull request is open.",
+    ...open.flatMap((p, i) => [i ? ", " : "", link(`${ORG}/${p.repo}/pull/${p.pr}`, `${p.repo}#${p.pr}`)])));
+  table($("replaces-table"), ["Module", "Fork", "go.mod", "Replaced by", "State"], reps.flatMap((r) => r.consumers.flatMap((c) => c.files.map((f, i) =>
+    [i === 0 ? r.module : "", i === 0 ? link(`${ORG}/${c.repo}/blob/rhtas/main/${f.path}`, c.repo) : "", f.path, f.replaced,
+      f.state === "applied" ? "applied" : f.state === "missing" ? "missing" : "another release"]))), [], [3]);
 }
 
 async function dayview(date) {
@@ -500,6 +533,7 @@ function render() {
   vulns();
   soak();
   carries();
+  replaces();
   waiting();
 }
 

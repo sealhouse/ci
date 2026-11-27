@@ -71,15 +71,9 @@ upstream_repo() {
 
 # pr_merge PR prints the commit upstream merged PR as, or nothing while it is unmerged.
 pr_merge() {
-  local url out
-  url="${GITHUB_API_URL:-https://api.github.com}/repos/$(upstream_repo)/pulls/$1"
-  if [ -n "${GH_TOKEN:-}" ]; then
-    out="$(curl -fsS --retry 3 --config <(printf 'header = "Authorization: Bearer %s"\n' "${GH_TOKEN}") \
-      -H 'Accept: application/vnd.github+json' "${url}")"
-  else
-    out="$(curl -fsS --retry 3 -H 'Accept: application/vnd.github+json' "${url}")"
-  fi || { echo "cannot look up upstream PR #$1 in $(upstream_repo)" >&2; return 1; }
-  jq -r 'if .merged then .merge_commit_sha else "" end' <<<"${out}"
+  local got
+  got="$(upstream_pr "$(upstream_repo)" "$1")" || return 1
+  jq -r '.merge_sha // ""' <<<"${got}"
 }
 
 # The last sync merge on the branch's first-parent line, if any.

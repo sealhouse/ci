@@ -38,7 +38,7 @@ push_tag() {
 
 # inventory_pr MODULE FORK_MODULE VERSION REASON DROP opens ci's replaces.lock PR.
 inventory_pr() {
-  local module="$1" line="$1 $2 $3 $4 $5" work slug new pr
+  local module="$1" line="$1 $2 $3 $5 $4" work slug new pr
   work="$(mktemp -d)"
   GH_TOKEN="$(gh_app_token "${BOT_APP_ID:?}" "${BOT_APP_KEY:?}" '{"contents":"write","pull_requests":"write"}' ci)"
   export GH_TOKEN
@@ -76,12 +76,10 @@ case "${1:-}" in
     removable
     ;;
   --auto)
-    while read -r module fork_module version reason drop; do
+    while read -r module fork_module version drop reason; do
       fork="$(cut -d/ -f3 <<<"${fork_module}")"
       clone_fork "${fork}"
-      rest="${fork_module#"${org}/${fork}"}"
-      subdir="$(sed -E 's#/v([2-9]|[1-9][0-9]+)$##; s#^/##' <<<"${rest}")"
-      subdir="${subdir:-.}"
+      subdir="$(fork_subdir "${fork_module}")"
       tag="$(tag_prefix "${subdir}")${version}"
       if git -C "${sealhouse}/${fork}" rev-parse -q --verify "refs/tags/${tag}" >/dev/null &&
         ! changed "${sealhouse}/${fork}" "${subdir}" "${tag}"; then

@@ -8,6 +8,10 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck disable=SC1091
 source "${root}/hack/github.sh"
+# shellcheck disable=SC1091
+source "${root}/hack/lib.sh"
+# shellcheck disable=SC1091
+source "${root}/hack/replace-lib.sh"
 
 # gh_api_pages PATH FILTER prints FILTER over every page of a GET, following the Link headers.
 gh_api_pages() {
@@ -256,6 +260,42 @@ for f in "${forks[@]}"; do
   jq -nc --arg r "${f}" --arg t "${times}" '($t | split("\n") | map(select(. != "") | tonumber)) as $s |
     {repo: $r, behind: ($s | length), oldest_at: ($s | min | if . then todate else null end)}' >>"${j}/behind"
 done
+# replaces.lock: each line's drop condition, and whether each fork that uses the module replaces it at the line's release.
+git -C "${work}/ci" show HEAD:replaces.lock >"${work}/replaces.lock" 2>/dev/null || : >"${work}/replaces.lock"
+replaces_inventory "${work}/replaces.lock" >"${work}/replaces.lines"
+: >"${j}/gomods"
+if [ -s "${work}/replaces.lines" ]; then
+  for f in "${forks[@]}"; do
+    d="${work}/mods/${f}"
+    git clone -q --depth 1 --filter=blob:none --no-checkout -b rhtas/main "${git_base}/${f}.git" "${d}"
+    while read -r path; do
+      git -C "${d}" show "HEAD:${path}" >"${work}/go.mod"
+      go mod edit -json "${work}/go.mod" | jq -c --arg r "${f}" --arg p "${path}" \
+        '{repo: $r, path: $p, requires: [.Require // [] | .[].Path], replaces: [.Replace // [] | .[] | {old: .Old.Path, new: .New.Path, version: .New.Version}]}' >>"${j}/gomods"
+    done < <(git -C "${d}" ls-tree -r --name-only HEAD | grep -E '(^|/)go\.mod$')
+  done
+fi
+: >"${j}/replaces"
+while read -r module fork_module version drop reason; do
+  f="$(cut -d/ -f3 <<<"${fork_module}")"
+  read -r _ url _ < <(awk -v f="${f}" '$1 == f' "${forks_lock}"; echo)
+  if [ -n "${url}" ]; then
+    url="${url%/}"
+    cond="$(drop_state "${work}/${f}" "$(fork_subdir "${fork_module}")" "${drop}" "$(awk -F'[/:]' '{ print $(NF - 1) "/" $NF }' <<<"${url%.git}")")"
+  else
+    cond="$(jq -nc --arg d "${drop}" '{kind: (if $d | startswith("upstream-pr=") then "pr" else "version" end), state: "unknown", released: null}')"
+  fi
+  jq -sc --arg m "${module}" --arg fm "${fork_module}" --arg v "${version}" --arg d "${drop}" --arg why "${reason}" --argjson c "${cond}" '
+    [.[] | select(any(.requires[]; . == $m) or any(.replaces[]; .old == $m)) |
+      (first(.replaces[] | select(.old == $m)) // null) as $rep |
+      {repo, path, replaced: (if $rep then "\($rep.new) \($rep.version // "")" | rtrimstr(" ") else null end),
+        state: (if $rep == null then "missing" elif $rep.new == $fm and $rep.version == $v then "applied" else "other" end)}] |
+    group_by(.repo) | map({repo: .[0].repo,
+      state: (map(.state) | if all(. == "applied") then "applied" elif any(. == "missing") then "missing" else "other" end),
+      files: map(del(.repo))}) as $consumers |
+    {module: $m, fork_module: $fm, version: $v, drop: $d, reason: $why, condition: $c, consumers: $consumers}' "${j}/gomods" >>"${j}/replaces"
+done <"${work}/replaces.lines"
+
 open_prs="$(jq -c "${kind}"' [.[] | select(.closed_at == null) | {repo, pr: .number, title, author, opened_at: .created_at,
   kind: (.head | kind)}] | sort_by(.repo, .pr)' "${j}/pulls")"
 alpha_now="$(git -C "${catalog}" show main:alpha/head.env 2>/dev/null | sed -n 's/^CSV=//p')"
@@ -265,7 +305,7 @@ jq -n --arg day "${day}" --arg from "${from}" --arg to "${to}" \
   --arg now "${REPORT_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" \
   --slurpfile syncs "${j}/syncs" --slurpfile images "${j}/images" --slurpfile prs "${j}/prs" \
   --slurpfile alphas "${j}/alphas" --slurpfile nightly "${j}/nightly" --slurpfile runs "${j}/runs" \
-  --slurpfile behind "${j}/behind" --slurpfile carries "${j}/carries" --argjson soak "${soak:-[]}" --argjson vulns "${vulns:-[]}" \
+  --slurpfile behind "${j}/behind" --slurpfile carries "${j}/carries" --slurpfile replaces "${j}/replaces" --argjson soak "${soak:-[]}" --argjson vulns "${vulns:-[]}" \
   --argjson open "${open_prs}" --arg alpha "${alpha_now}" '{
     schema: 1, date: $day, status: "ok", partial: ($now < $to or any($runs[0][]; .status != "completed")), window: {from: $from, to: $to},
     run: {id: $run_id, url: $run_url, ci: $ci, collected_at: $now},
@@ -273,6 +313,7 @@ jq -n --arg day "${day}" --arg from "${from}" --arg to "${to}" \
     prs: ($prs | sort_by(.repo, .pr)), alphas: ($alphas | sort_by(.at)),
     runs: $runs[0], nightly: ($nightly | sort_by(.created_at)),
     soak: $soak, vulns: $vulns,
-    snapshot: {at: $now, alpha: $alpha, behind: ($behind | sort_by(.repo)), carries: ($carries | sort_by(.repo)), open_prs: $open}
+    snapshot: {at: $now, alpha: $alpha, behind: ($behind | sort_by(.repo)), carries: ($carries | sort_by(.repo)),
+      replaces: ($replaces | sort_by(.module)), open_prs: $open}
   }' >"${work}/report.json"
 mv "${work}/report.json" "${out}"

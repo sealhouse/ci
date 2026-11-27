@@ -132,6 +132,12 @@
       <div class="scroll" id="carries"></div>
       <details><summary>Every carry</summary><div class="scroll" id="carries-table"></div></details>
     </section>
+    <section class="card">
+      <h2>Library replaces</h2>
+      <p class="small">The fork library releases ci's replaces.lock puts in place of upstream's modules, as of the latest report. Each fork's go.mod that requires the module should replace it with the line's release; the replaces pull requests do this. A line can go once upstream has a plain release that meets its drop condition: a version, or a release tag holding the upstream PR's merge.</p>
+      <div class="scroll" id="replaces"></div>
+      <details><summary>Every go.mod</summary><div class="scroll" id="replaces-table"></div></details>
+    </section>
   </div>
 
   <div class="tabpanel" id="tab-day" role="tabpanel" aria-label="Day report" hidden>

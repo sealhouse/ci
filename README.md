@@ -62,6 +62,8 @@ flowchart LR
   class invpr,reppr pr
 ```
 
+A `replaces.lock` line is `<module> <fork module> <fork release> <drop when> <reason>`, the reason running to the end of the line. Its drop condition is `upstream>=vX.Y.Z`, or `upstream-pr=N` for a fix upstream has as PR `N`, met once a plain upstream release tag holds the PR's merge. The timer's `sealhouse-replaces` run lists the lines whose condition upstream has met, for a maintainer to delete. The report shows each line, how far upstream is with its condition, and which forks' `go.mod` files have its replace.
+
 ### A vulnerability with a fix
 
 ```mermaid

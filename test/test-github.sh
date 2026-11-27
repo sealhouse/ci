@@ -541,14 +541,14 @@ export FORKS_LOCK="${t}/forks.lock" SEALHOUSE_REPLACES="${t}/replaces.lock"
 
 state '{"pulls": [], "files": {"replaces.lock": "# inventory\n"}}'
 reset_log
-"${hack}/release-library.sh" foo . CVE-2026-1 'upstream>=v1.3.0' >/dev/null
+"${hack}/release-library.sh" foo . "CVE-2026-1 in foo's parser" 'upstream>=v1.3.0' >/dev/null
 git -C "${t}/origin/foo.git" rev-parse -q --verify refs/tags/v1.2.1-rhtas.1 >/dev/null || fail "the release tag was not pushed"
-line='github.com/example-sh/foo github.com/sealhouse/foo v1.2.1-rhtas.1 CVE-2026-1 upstream>=v1.3.0'
+line="github.com/example-sh/foo github.com/sealhouse/foo v1.2.1-rhtas.1 upstream>=v1.3.0 CVE-2026-1 in foo's parser"
 calls POST /git/blobs | jq -r .body.content | grep -qxF "${line}" || fail "replaces.lock line"
 calls POST /git/blobs | jq -r .body.content | grep -qx '# inventory' || fail "replaces.lock lost a line"
 calls POST 'sealhouse/ci/pulls$' | jq -e '.body.base == "main"' >/dev/null || fail "the inventory PR"
 calls POST /graphql | grep -q SQUASH || fail "inventory auto-merge"
-ok "release-library tags the module and opens the inventory PR"
+ok "release-library tags the module and opens the inventory PR, with a reason of several words last"
 
 # --auto releases again only when consumers would see a change.
 printf '%s\n' "${line}" >"${SEALHOUSE_REPLACES}"
@@ -559,12 +559,38 @@ git -C "${foo}" fetch -q "${t}/origin/foo.git" --tags
 printf 'package foo\n\nconst X = 1\n' >"${foo}/foo.go"
 git -C "${foo}" add -A; git -C "${foo}" commit -q -m "UPSTREAM: <carry>: change"
 git -C "${foo}" push -q "${t}/origin/foo.git" rhtas/main
+reset_log
 "${hack}/release-library.sh" --auto >/dev/null 2>&1
 git -C "${t}/origin/foo.git" rev-parse -q --verify refs/tags/v1.2.1-rhtas.2 >/dev/null || fail "--auto did not release the change"
+calls POST /git/blobs | jq -r .body.content | grep -qxF "${line/rhtas.1/rhtas.2}" || fail "--auto did not keep the reason: $(calls POST /git/blobs | jq -r .body.content)"
 ok "release-library --auto follows real changes only"
 
+# --removable: upstream-pr=N waits for a release tag that contains N's merge commit.
+git -C "${foo}" fetch -q "${t}/origin/foo.git" rhtas/main --tags
+git -C "${foo}" reset -q --hard FETCH_HEAD
+printf 'package foo\n\nconst X = 2\n' >"${foo}/foo.go"
+git -C "${foo}" add -A; git -C "${foo}" commit -q -m "upstream's fix"
+fix="$(git -C "${foo}" rev-parse HEAD)"
+git -C "${foo}" push -q "${t}/origin/foo.git" rhtas/main
+printf '%s\n' "github.com/example-sh/foo github.com/sealhouse/foo v1.2.1-rhtas.2 upstream-pr=7 foo's fix, not yet released" >"${SEALHOUSE_REPLACES}"
+removable() { "${hack}/release-library.sh" --removable 2>"${t}/err"; }
+state '{"upstream_pulls": {"example-sh/foo#7": {"merged": false, "merge_commit_sha": null}}}'
+[ -z "$(removable)" ] || fail "an unmerged PR was removable: $(removable)"
+state "{\"upstream_pulls\": {\"example-sh/foo#7\": {\"merged\": true, \"merge_commit_sha\": \"${fix}\"}}}"
+[ -z "$(removable)" ] || fail "a merged but unreleased PR was removable: $(removable)"
+git -C "${foo}" tag v1.3.0-rc.1; git -C "${foo}" push -q "${t}/origin/foo.git" v1.3.0-rc.1
+[ -z "$(removable)" ] || fail "a pre-release made the PR removable: $(removable)"
+git -C "${foo}" tag v1.3.0; git -C "${foo}" push -q "${t}/origin/foo.git" v1.3.0
+[ "$(removable)" = "github.com/example-sh/foo: upstream released #7 in v1.3.0 (foo's fix, not yet released); its replace can go" ] ||
+  fail "the released PR: $(removable) $(cat "${t}/err")"
+printf '%s\n' "github.com/example-sh/foo github.com/sealhouse/foo v1.2.1-rhtas.2 upstream>=v1.3.0 CVE-2026-1" >"${SEALHOUSE_REPLACES}"
+[ "$(removable)" = "github.com/example-sh/foo: upstream has released v1.3.0 or newer (CVE-2026-1); its replace can go" ] ||
+  fail "upstream>=: $(removable) $(cat "${t}/err")"
+state '{"upstream_pulls": {}}'
+ok "release-library --removable waits for upstream to release the PR, or the version"
+
 # Consumers.
-printf 'example.com/lib github.com/sealhouse/foo v1.2.1-rhtas.1 CVE-2026-1 upstream>=v1.3.0\n' >"${SEALHOUSE_REPLACES}"
+printf 'example.com/lib github.com/sealhouse/foo v1.2.1-rhtas.1 upstream>=v1.3.0 CVE-2026-1\n' >"${SEALHOUSE_REPLACES}"
 id="$(sha256sum "${SEALHOUSE_REPLACES}" | cut -c1-12)"
 stale='{"number": 3, "node_id": "x", "base": {"ref": "rhtas/main"}, "head": {"ref": "replaces/oldoldoldold", "sha": "s"}}'
 state "{\"pulls\": [${stale}]}"

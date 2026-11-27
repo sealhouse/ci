@@ -77,6 +77,7 @@ jq -s '
       age_hours: hours(.oldest_at; $s.at)}],
     open_prs: ($ok[-1].snapshot.open_prs // []),
     carries: ($ok[-1].snapshot.carries // []),
+    replaces: ($ok[-1].snapshot.replaces // []),
     alpha: ($ok[-1].snapshot.alpha // null)
   }' "${files[@]}" >"${tmp}"
 mv "${tmp}" "${out}"

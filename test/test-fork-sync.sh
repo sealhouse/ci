@@ -117,7 +117,7 @@ echo "ok: a Go-Get carry stops a sync that cannot load the build list, and appli
 
 # 4. A Go-Replaces carry, with the inventory replacing example.com/dep.
 export SEALHOUSE_REPLACES="${t}/replaces.lock"
-echo 'example.com/dep github.com/sealhouse/dep v1.2.1-rhtas.1 GO-2026-0002 upstream>=v1.2.1' >"${SEALHOUSE_REPLACES}"
+echo 'example.com/dep github.com/sealhouse/dep v1.2.1-rhtas.1 upstream>=v1.2.1 GO-2026-0002' >"${SEALHOUSE_REPLACES}"
 git -C "${fork}" switch -q rhtas/main
 "${ci_root}/hack/apply-replaces.sh" "${fork}" 2>/dev/null
 git -C "${fork}" commit -q -am "UPSTREAM: <drop>: Replace modules as ci's replaces.lock asks
