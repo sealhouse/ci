@@ -214,7 +214,7 @@ pin_msg="UPSTREAM: <drop>: Pin ci ${p40:0:12}
 
 Ci-Pin: ${p40}"
 merge_with() { # PULLS EXTRA_STATE
-  state "$(jq -nc --argjson p "$1" --argjson g "${green}" --argjson x "${2:-{\}}" '{pulls: $p, checks: $g, checks_by_sha: {}, compare_status: {}, merge_refused: [], pr_commits: {}, pr_files: {}} + $x')"
+  state "$(jq -nc --argjson p "$1" --argjson g "${green}" --argjson x "${2:-{\}}" '{pulls: $p, checks: $g, checks_by_sha: {}, compare_status: {}, behind: {}, merge_refused: [], update_refused: [], pr_commits: {}, pr_files: {}} + $x')"
   reset_log
   "${hack}/bot-merge.sh" app rhtas/main >"${t}/out"
 }
@@ -305,6 +305,36 @@ merge_with "[$(botpr 4 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]')]" \
     '{pr_commits: {"4": $c}, pr_files: {"4": $f}, checks: ($g + [{name: "pr / hand-off", status: "in_progress", conclusion: null}])}')"
 calls PUT 'pulls/4/merge$' | grep -q . || fail "the hand-off that asked for the run held the merge"
 ok "bot-merge waits for an open sync PR and for a merge GitHub refuses, but not for the hand-off"
+
+# On a fork, a green bot PR rhtas/main has moved past is brought up to date, the oldest first and one at a time.
+stale_with() { # PULLS BEHIND [EXTRA_STATE]
+  merge_with "$1" "$(jq -nc --argjson c "$(signed "${pin_msg}")" --argjson f "[${good_pin}]" --argjson b "$2" --argjson x "${3:-{\}}" \
+    '{pr_commits: {"4": $c, "12": $c, "14": $c}, pr_files: {"4": $f, "12": $f, "14": $f}, behind: $b} + $x')"
+}
+three="[$(botpr 4 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]'), $(botpr 12 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]'), $(botpr 14 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]')]"
+stale_with "${three}" '{"sha12": 2, "sha14": 1}'
+calls PUT 'pulls/4/merge$' | grep -q . || fail "an up to date PR did not merge"
+calls GET "app/compare/rhtas/main...sha4" | grep -q . || fail "the PR was not compared with rhtas/main"
+[ -z "$(calls PUT 'pulls/(12|14)/merge$')" ] || fail "merged a PR rhtas/main has moved past"
+[ "$(calls PUT 'update-branch$' | jq -r .path)" = /repos/sealhouse/app/pulls/12/update-branch ] || fail "did not bring only the oldest stale PR up to date: $(calls PUT update-branch)"
+calls PUT 'pulls/12/update-branch$' | jq -e '.body == {expected_head_sha: "sha12"}' >/dev/null || fail "the update did not name the tested head"
+grep -q 'PR 12 (.*) is 2 behind rhtas/main' "${t}/out" && grep -q 'brought PR 12 (.*) up to date' "${t}/out" || fail "the update not reported: $(cat "${t}/out")"
+ok "bot-merge on a fork merges an up to date PR and brings only the oldest stale one up to date"
+
+stale_with "${three}" '{"sha4": 1}' '{"checks_by_sha": {"sha12": '"${running}"'}}'
+[ -z "$(calls PUT update-branch)" ] || fail "brought a PR up to date while another ran its checks"
+grep -q "PR 4 (.*) waits for PR 12's checks" "${t}/out" || fail "the wait not reported: $(cat "${t}/out")"
+calls PUT 'pulls/14/merge$' | grep -q . || fail "an up to date PR waited for another's checks"
+stale_with "[$(botpr 4 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]')]" '{"sha4": 1}' '{"update_refused": ["4"]}'
+grep -q 'PR 4 (.*) could not be brought up to date: it needs a maintainer' "${t}/out" || fail "a refused update not reported"
+stale_with "[$(botpr 4 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]')]" '{"sha4": 1}' '{"checks": '"${red}"'}'
+[ -z "$(calls PUT update-branch)" ] || fail "brought a red PR up to date"
+state "$(jq -nc --argjson g "${green}" --argjson c "$(signed "${pin_msg}")" --argjson f "[${good_pin}]" --argjson p "[$(botpr 4 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]')]" \
+  '{pulls: $p, checks: $g, checks_by_sha: {}, compare_status: {}, behind: {sha4: 1}, merge_refused: [], update_refused: [], pr_commits: {"4": $c}, pr_files: {"4": $f}}')"
+reset_log
+"${hack}/bot-merge.sh" secure-sign-pqc-operator main >"${t}/out"
+[ -z "$(calls PUT update-branch)$(calls GET 'compare/main\.\.\.')" ] || fail "bot-merge brought an operator PR up to date, which bump-update does"
+ok "bot-merge waits for a running PR before an update, reports one GitHub refuses, leaves red PRs and the operator alone"
 
 # repin
 pin="$(printf 'f%.0s' {1..40})"
