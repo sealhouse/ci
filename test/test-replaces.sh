@@ -67,9 +67,21 @@ check() { "${ci_root}/hack/check-replaces.sh" "${app}" "${inv}" 2>"${t}/check.er
 replace_of() { go mod edit -json "${app}/${2:-.}/go.mod" | jq -r --arg m "$1" '.Replace // [] | .[] | select(.Old.Path == $m) | .New.Path + "@" + (.New.Version // "")'; }
 committed() { git -C "${app}" add -A && git -C "${app}" commit -q -m "$1"; }
 
+# 0. replaces.lock lines: the reason is last and may run to several words, but there must be one.
+inventory() { bash -c 'source "$1/hack/lib.sh" && replaces_inventory "$2"' _ "${ci_root}" "${inv}"; }
+echo "example.com/lib github.com/sealhouse/lib v1.0.1-rhtas.1 upstream>=v1.0.1 GO-2026-0001 in lib's parser" >"${inv}"
+[ "$(inventory)" = "$(cat "${inv}")" ] || fail "a reason of several words was refused"
+echo 'example.com/lib github.com/sealhouse/lib v1.0.1-rhtas.1 upstream-pr=507 lib#507' >"${inv}"
+[ "$(inventory)" = "$(cat "${inv}")" ] || fail "upstream-pr=N was refused"
+for bad in 'upstream>=v1.0.1' 'upstream-pr=507' 'upstream-pr=x lib#507' 'upstream<=v1.0.1 GO-2026-0001'; do
+  echo "example.com/lib github.com/sealhouse/lib v1.0.1-rhtas.1 ${bad}" >"${inv}"
+  if inventory 2>/dev/null; then fail "accepted ${bad}"; fi
+done
+echo "ok: a replaces.lock reason is the rest of the line, the drop is upstream>=vX.Y.Z or upstream-pr=N, and other lines are refused"
+
 # 1. lib's fork release: replaced in both modules, check passes, a second
 # apply changes nothing.
-echo 'example.com/lib github.com/sealhouse/lib v1.0.1-rhtas.1 GO-2026-0001 upstream>=v1.0.1' >"${inv}"
+echo 'example.com/lib github.com/sealhouse/lib v1.0.1-rhtas.1 upstream>=v1.0.1 GO-2026-0001' >"${inv}"
 check && fail "check passed before the replace was applied"
 apply
 check || fail "check failed after apply: $(cat "${t}/check.err")"
@@ -82,7 +94,7 @@ apply
 echo "ok: apply-replaces.sh applies the inventory, and a second run changes nothing"
 
 # 2. The inventory moves on to rhtas.2.
-echo 'example.com/lib github.com/sealhouse/lib v1.0.1-rhtas.2 GO-2026-0001 upstream>=v1.0.1' >"${inv}"
+echo 'example.com/lib github.com/sealhouse/lib v1.0.1-rhtas.2 upstream>=v1.0.1 GO-2026-0001' >"${inv}"
 check && fail "check passed with the replace one release behind"
 grep -q 'replaces.lock has example.com/lib => github.com/sealhouse/lib v1.0.1-rhtas.2' "${t}/check.err" || fail "unexpected check error: $(cat "${t}/check.err")"
 apply
@@ -102,18 +114,18 @@ grep -q "^go.mod: example.com/lib v1.1.0 is newer than replaces.lock's github.co
 check && fail "check passed with lib replaced below the version the build selects"
 grep -q "^\./go.mod: example.com/lib v1.1.0 is newer than" "${t}/check.err" || fail "unexpected check error: $(cat "${t}/check.err")"
 publish github.com/sealhouse/lib v1.1.1-rhtas.1 example.com/lib
-echo 'example.com/lib github.com/sealhouse/lib v1.1.1-rhtas.1 GO-2026-0001 upstream>=v1.1.1' >"${inv}"
+echo 'example.com/lib github.com/sealhouse/lib v1.1.1-rhtas.1 upstream>=v1.1.1 GO-2026-0001' >"${inv}"
 apply || fail "apply failed with a fork release newer than the build needs"
 check || fail "check failed after apply: $(cat "${t}/check.err")"
 git -C "${app}" checkout -q -- .
-echo 'example.com/lib github.com/sealhouse/lib v1.0.1-rhtas.2 GO-2026-0001 upstream>=v1.0.1' >"${inv}"
+echo 'example.com/lib github.com/sealhouse/lib v1.0.1-rhtas.2 upstream>=v1.0.1 GO-2026-0001' >"${inv}"
 echo "ok: a fork release older than the version the build selects fails apply and check until the fork catches up"
 
 # 3. mid's fork release brings in extra, which the inventory also holds.
 {
-  echo 'example.com/lib github.com/sealhouse/lib v1.0.1-rhtas.2 GO-2026-0001 upstream>=v1.0.1'
-  echo 'example.com/mid github.com/sealhouse/mid v1.0.1-rhtas.1 GO-2026-0002 upstream>=v1.0.1'
-  echo 'example.com/extra github.com/sealhouse/extra v1.0.1-rhtas.1 GO-2026-0003 upstream>=v1.0.1'
+  echo 'example.com/lib github.com/sealhouse/lib v1.0.1-rhtas.2 upstream>=v1.0.1 GO-2026-0001'
+  echo 'example.com/mid github.com/sealhouse/mid v1.0.1-rhtas.1 upstream>=v1.0.1 GO-2026-0002'
+  echo 'example.com/extra github.com/sealhouse/extra v1.0.1-rhtas.1 upstream>=v1.0.1 GO-2026-0003'
 } >"${inv}"
 apply
 check || fail "check failed after apply: $(cat "${t}/check.err")"
@@ -124,7 +136,7 @@ echo "ok: an inventory module a fork release brings in is replaced too"
 
 # 4. sub's directory replace of the root survives every apply, even with the
 # inventory holding example.com/app itself, which the root must not replace.
-echo 'example.com/app github.com/sealhouse/app v1.0.1-rhtas.1 GO-2026-0004 upstream>=v1.0.1' >>"${inv}"
+echo 'example.com/app github.com/sealhouse/app v1.0.1-rhtas.1 upstream>=v1.0.1 GO-2026-0004' >>"${inv}"
 apply
 check || fail "check failed with the consumer's own module in the inventory: $(cat "${t}/check.err")"
 [ -z "$(replace_of example.com/app)" ] || fail "app replaces itself with $(replace_of example.com/app)"

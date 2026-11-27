@@ -68,7 +68,11 @@ git -C "${fork}" fetch -q "${up}" "${u0}"
 git -C "${fork}" reset -q --hard "${u0}"
 mkdir -p "${fork}/.sealhouse"
 echo IMAGE=tsa >"${fork}/.sealhouse/build.env"
-git -C "${fork}" add .sealhouse/build.env
+# Its modules: the root takes replaces.lock's sigstore-go release, sub an older one, and neither replaces lib2.
+mkdir -p "${fork}/sub"
+printf 'module example.com/tsa\n\ngo 1.25\n\nrequire (\n\tgithub.com/sigstore/sigstore-go v1.4.0\n\tgithub.com/x/lib2 v1.0.0\n)\n\nreplace github.com/sigstore/sigstore-go => github.com/sealhouse/sigstore-go v1.4.1-rhtas.1\n' >"${fork}/go.mod"
+printf 'module example.com/tsa/sub\n\ngo 1.25\n\nrequire github.com/sigstore/sigstore-go v1.4.0\n\nreplace github.com/sigstore/sigstore-go => github.com/sealhouse/sigstore-go v1.4.0-rhtas.1\n' >"${fork}/sub/go.mod"
+git -C "${fork}" add .sealhouse/build.env go.mod sub/go.mod
 c0="$(commit "${fork}" "$(at '-3 days')" "UPSTREAM: <carry>: image build")"
 git -C "${fork}" fetch -q "${up}" "${u2}"
 GIT_COMMITTER_DATE="@$(at '02:00') +0000" git -C "${fork}" merge -q --no-ff -m "Merge upstream main ${u2:0:7} into rhtas/main" "${u2}"
@@ -85,7 +89,10 @@ git -C "${lib}" reset -q --hard "${u3}"
 p7="$(commit "${lib}" "$(at '-4 days')" "UPSTREAM: 7: seven")"
 p8="$(commit "${lib}" "$(at '-4 days')" "UPSTREAM: 8: eight")"
 p9="$(commit "${lib}" "$(at '-4 days')" "UPSTREAM: 9: nine")"
-bare "${lib}" "${gitroot}/sealhouse/sigstore-go.git" rhtas/main
+# Upstream's releases, which the fork mirrors: v1.5.0 is the first with U3.
+git -C "${lib}" tag v1.4.0 "${u0}"
+git -C "${lib}" tag v1.5.0 "${u3}"
+bare "${lib}" "${gitroot}/sealhouse/sigstore-go.git" rhtas/main v1.4.0 v1.5.0
 printf 'timestamp-authority file://%s main\nsigstore-go file://%s main\n' "${t}/up/tsa.git" "${t}/up/tsa.git" >"${t}/forks.lock"
 export REPORT_FORKS="${t}/forks.lock"
 
@@ -119,7 +126,11 @@ ci_dir="${t}/w/ci"
 git init -q -b main "${ci_dir}"
 printf '# <fork> <upstream PR> <carried head> [remove | replaced-by <PR>]\nsigstore-go 7 %s\nsigstore-go 8 %s remove\nsigstore-go 9 %s replaced-by 10\n' \
   "$(printf '7%.0s' {1..40})" "$(printf '8%.0s' {1..40})" "$(printf '9%.0s' {1..40})" >"${ci_dir}/carries.lock"
-git -C "${ci_dir}" add carries.lock
+# replaces.lock: sigstore-go waits for upstream's #507, which U3 merged; lib2 for a v9.0.0 upstream has not released.
+printf '# <module> <fork module> <fork version> <drop when> <reason>\n%s\n%s\n' \
+  'github.com/sigstore/sigstore-go github.com/sealhouse/sigstore-go v1.4.1-rhtas.1 upstream-pr=507 ML-DSA tokens' \
+  'github.com/x/lib2 github.com/sealhouse/timestamp-authority v1.0.1-rhtas.1 upstream>=v9.0.0 GO-2026-0007 in lib2' >"${ci_dir}/replaces.lock"
+git -C "${ci_dir}" add carries.lock replaces.lock
 commit "${ci_dir}" "$(at '-30 days')" "ci" >/dev/null
 git -C "${ci_dir}" switch -q -c soak-trend
 printf 'date\tcommit\tcsv\tgoroutines\theap_mib\tsys_mib\tkills\tresult\n%s\tabc\top.v0.1.0-alpha.1\t139\t12.5\t30.1\t14\tpass\n%s\tdef\top.v0.1.0-alpha.2\t141\t12.9\t30.0\t15\tpass\n' \
@@ -180,7 +191,8 @@ export REPORT_RUN_ID=77 REPORT_RUN_URL=https://github.example/runs/77 REPORT_CI=
 
 out="${t}/out"
 mkdir -p "${out}"
-state "$(jq -nc --arg h7 "$(printf '7%.0s' {1..40})" '{upstream_pulls: {"up/tsa#7": {state: "open", draft: false, merged: false, head: {sha: $h7}},
+state "$(jq -nc --arg h7 "$(printf '7%.0s' {1..40})" --arg u3 "${u3}" '{upstream_pulls: {"up/tsa#7": {state: "open", draft: false, merged: false, head: {sha: $h7}},
+  "up/tsa#507": {state: "closed", merged: true, merge_commit_sha: $u3, head: {sha: $u3}, html_url: "https://github.example/up/tsa/pull/507"},
   "up/tsa#8": {state: "closed", merged: true, head: {sha: "a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8a8"}, html_url: "https://github.example/up/tsa/pull/8"}},
   fail_paths: ["^/repos/up/tsa/pulls/9$"]}')"
 "${hack}/report-collect.sh" "${day}" "${out}/${day}.json"
@@ -233,6 +245,17 @@ jq -e --arg k "${k}" --arg p7 "${p7}" --arg p8 "${p8}" --arg p9 "${p9}" --arg h7
   {repo: "timestamp-authority", commits: [{sha: $k, at: "2026-03-10T02:00:00Z", label: "drop", title: "Pin ci", pr: null}]}]' "${r}" >/dev/null ||
   fail "carries: $(jq -c .snapshot.carries "${r}")"
 ok "the snapshot has each fork's waiting upstream commits, current carries with their upstream PRs, and the open PRs"
+jq -e '.snapshot.replaces == [
+  {module: "github.com/sigstore/sigstore-go", fork_module: "github.com/sealhouse/sigstore-go", version: "v1.4.1-rhtas.1", drop: "upstream-pr=507",
+    reason: "ML-DSA tokens", condition: {kind: "pr", number: 507, state: "merged", url: "https://github.example/up/tsa/pull/507", released: "v1.5.0"},
+    consumers: [{repo: "timestamp-authority", state: "other", files: [
+      {path: "go.mod", replaced: "github.com/sealhouse/sigstore-go v1.4.1-rhtas.1", state: "applied"},
+      {path: "sub/go.mod", replaced: "github.com/sealhouse/sigstore-go v1.4.0-rhtas.1", state: "other"}]}]},
+  {module: "github.com/x/lib2", fork_module: "github.com/sealhouse/timestamp-authority", version: "v1.0.1-rhtas.1", drop: "upstream>=v9.0.0",
+    reason: "GO-2026-0007 in lib2", condition: {kind: "version", want: "v9.0.0", released: null},
+    consumers: [{repo: "timestamp-authority", state: "missing", files: [{path: "go.mod", replaced: null, state: "missing"}]}]}]' "${r}" >/dev/null ||
+  fail "replaces: $(jq -c .snapshot.replaces "${r}")"
+ok "the snapshot has each replaces.lock line: how far upstream is with its drop condition, and which forks have its replace"
 
 REPORT_RUN_ID=78 REPORT_NOW=2026-03-12T01:00:00Z "${hack}/report-collect.sh" "${day}" "${out}/again.json"
 cmp <(jq -S 'del(.run, .snapshot)' "${r}") <(jq -S 'del(.run, .snapshot)' "${out}/again.json") || fail "a rerun differs"
@@ -299,9 +322,10 @@ jq -e '.incidents == [
    to: "2026-03-10T16:30:00Z", hours: 1.5, run: "https://github.example/runs/920"}]' "${ru}" >/dev/null || fail "incidents: $(jq -c .incidents "${ru}")"
 ok "a failed step recovers only when it passes again, not at a run that skips it; a failure without a failed step recovers at the next green run"
 jq -e '.vulns == [{date: "2026-03-10", fix: 2, baking: 1, nofix: 1, repos: 2}] and (.nightly[0].jobs == {"kind (1.33)": "success", soak: "skipped", vulns: "success"})
-  and (.behind | length == 2) and .alpha == "op.v0.1.0-alpha.2" and ([.carries[] | "\(.repo) \(.commits | length)"] == ["sigstore-go 3", "timestamp-authority 1"])' "${ru}" >/dev/null ||
-  fail "series: $(jq -c '[.vulns, .nightly, .behind, .carries]' "${ru}")"
-ok "the vulnerability series, with a fix due that night fixable, a later one baking and one recorded before due counted fixable; the nightly and waiting-commit series, and the latest carries"
+  and (.behind | length == 2) and .alpha == "op.v0.1.0-alpha.2" and ([.carries[] | "\(.repo) \(.commits | length)"] == ["sigstore-go 3", "timestamp-authority 1"])
+  and ([.replaces[] | "\(.module) \(.condition.released)"] == ["github.com/sigstore/sigstore-go v1.5.0", "github.com/x/lib2 null"])' "${ru}" >/dev/null ||
+  fail "series: $(jq -c '[.vulns, .nightly, .behind, .carries, .replaces]' "${ru}")"
+ok "the vulnerability series, with a fix due that night fixable, a later one baking and one recorded before due counted fixable; the nightly and waiting-commit series, and the latest carries and replaces"
 jq '.vulns = [.vulns[0] | .date = "2026-03-10T01:00:00Z" | .repo = "early" | .osv = "GO-2026-0009" | .fixed = "v2" | .due = "2026-03-01"]
   + .vulns' "${daily}/${day}.json" >"${t}/early.json"
 mv "${t}/early.json" "${daily}/${day}.json"

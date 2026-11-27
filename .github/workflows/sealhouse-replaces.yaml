@@ -14,9 +14,10 @@ on:
       subdir:
         default: .
       reason:
+        description: why the fork carries the fix, any text; it ends the replaces.lock line
         default: ''
       drop-when:
-        description: upstream>=vX.Y.Z
+        description: upstream>=vX.Y.Z, or upstream-pr=N once upstream releases PR N
         default: ''
       timer:
         description: set by sealhouse-timer, which names the run after it
@@ -61,4 +62,6 @@ jobs:
         run: ci/hack/replace-consumers.sh
       - name: Removable
         if: ${{ inputs.timer }}
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: ci/hack/release-library.sh --removable | tee -a "${GITHUB_STEP_SUMMARY}"

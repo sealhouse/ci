@@ -69,19 +69,54 @@ changed() {
 }
 
 # removable prints the inventory lines upstream has released the fix for.
+# fork_subdir FORK_MODULE prints the fork's subdirectory that holds FORK_MODULE, "." for the root.
+fork_subdir() {
+  local f rest
+  f="$(cut -d/ -f3 <<<"$1")"
+  rest="${1#"github.com/$(cut -d/ -f2 <<<"$1")/${f}"}"
+  rest="$(sed -E 's#/v([2-9]|[1-9][0-9]+)$##; s#^/##' <<<"${rest}")"
+  echo "${rest:-.}"
+}
+
+# drop_state FORK SUBDIR DROP SLUG prints how far upstream SLUG is with a replaces.lock drop condition, as
+# {kind: "pr", number, state, url, released} or {kind: "version", want, released}; released is the first
+# upstream release, a plain vX.Y.Z tag in FORK, that meets it, or null.
+drop_state() {
+  local fork="$1" prefix pr got merged want released=""
+  prefix="$(tag_prefix "$2")"
+  case "$3" in
+    upstream-pr=*)
+      pr="${3#upstream-pr=}"
+      got="$(upstream_pr "$4" "${pr}")" || got='{"state": "unknown", "merge_sha": null, "url": null}'
+      merged="$(jq -r '.merge_sha // empty' <<<"${got}")"
+      [ -z "${merged}" ] || released="$(git -C "${fork}" tag --contains "${merged}" --list "${prefix}v*" 2>/dev/null |
+        sed "s#^${prefix}##" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | head -1 || true)"
+      jq -c --arg n "${pr}" --arg slug "$4" --arg r "${released}" '{kind: "pr", number: ($n | tonumber), state,
+        url: (.url // "https://github.com/\($slug)/pull/\($n)"), released: (if $r == "" then null else $r end)}' <<<"${got}"
+      ;;
+    *)
+      want="${3#upstream>=}"
+      released="$(git -C "${fork}" tag --list "${prefix}v*" | sed "s#^${prefix}##" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V |
+        while read -r v; do
+          [ "$(go -C "${ci_root}/tools/semver" run . "${v}" "${want}")" -lt 0 ] || { echo "${v}"; break; }
+        done || true)"
+      jq -nc --arg w "${want}" --arg r "${released}" '{kind: "version", want: $w, released: (if $r == "" then null else $r end)}'
+      ;;
+  esac
+}
+
 removable() {
-  local module fork_module version reason drop fork rest subdir want
-  while read -r module fork_module version reason drop; do
+  local module fork_module version drop reason fork slug st released
+  while read -r module fork_module version drop reason; do
     fork="${sealhouse}/$(cut -d/ -f3 <<<"${fork_module}")"
-    rest="${fork_module#"${org}/$(basename "${fork}")"}"
-    subdir="$(sed -E 's#/v([2-9]|[1-9][0-9]+)$##; s#^/##' <<<"${rest}")"
-    want="${drop#upstream>=}"
     [ -d "${fork}" ] || { echo "${module}: no fork clone at ${fork}" >&2; continue; }
-    if git -C "${fork}" tag --list "$(tag_prefix "${subdir:-.}")v*" | sed "s#^$(tag_prefix "${subdir:-.}")##" |
-      grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | while read -r v; do
-        [ "$(go -C "${ci_root}/tools/semver" run . "${v}" "${want}")" -ge 0 ] && echo "${v}"
-      done | grep -q .; then
-      echo "${module}: upstream has released ${want} or newer (${reason}); its replace can go"
-    fi
+    slug="$(git -C "${fork}" remote get-url upstream | sed -E 's#/$##; s#\.git$##' | awk -F'[/:]' '{ print $(NF - 1) "/" $NF }')"
+    st="$(drop_state "${fork}" "$(fork_subdir "${fork_module}")" "${drop}" "${slug}")"
+    released="$(jq -r '.released // empty' <<<"${st}")"
+    [ -n "${released}" ] || continue
+    case "${drop}" in
+      upstream-pr=*) echo "${module}: upstream released #${drop#upstream-pr=} in ${released} (${reason}); its replace can go" ;;
+      *) echo "${module}: upstream has released ${drop#upstream>=} or newer (${reason}); its replace can go" ;;
+    esac
   done < <(replaces_inventory)
 }

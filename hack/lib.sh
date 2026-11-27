@@ -40,22 +40,35 @@ start_registry() {
 
 # replaces_inventory [FILE] prints replaces.lock's entries, from main by default.
 replaces_inventory() {
-  local entries ref=main module fork version reason drop extra
+  local entries ref=main module fork version drop reason
   if [ $# -eq 1 ] || [ -n "${SEALHOUSE_REPLACES:-}" ]; then
     entries="$(grep -vE '^\s*(#|$)' "${1:-${SEALHOUSE_REPLACES}}" || true)"
   else
     git -C "${ci_root}" rev-parse -q --verify refs/heads/main >/dev/null || ref=origin/main
     entries="$(git -C "${ci_root}" show "${ref}:replaces.lock" | grep -vE '^\s*(#|$)' || true)"
   fi
-  while read -r module fork version reason drop extra; do
+  while read -r module fork version drop reason; do
     [ -n "${module}" ] || continue
-    if [ -z "${drop}" ] || [ -n "${extra}" ] || [[ "${version}" != v*-rhtas.* ]] || [[ "${fork}" != github.com/sealhouse/* ]] ||
-      [[ "${drop}" != upstream\>=v* ]]; then
-      echo "replaces.lock: bad line: ${module} ${fork} ${version} ${reason} ${drop} ${extra}" >&2
+    if [ -z "${reason}" ] || [[ "${version}" != v*-rhtas.* ]] || [[ "${fork}" != github.com/sealhouse/* ]] ||
+      [[ ! "${drop}" =~ ^(upstream\>=v[0-9]|upstream-pr=[0-9]+$) ]]; then
+      echo "replaces.lock: bad line: ${module} ${fork} ${version} ${drop} ${reason}" >&2
       return 1
     fi
   done <<<"${entries}"
   [ -z "${entries}" ] || echo "${entries}"
+}
+
+# upstream_pr OWNER/REPO PR prints {state: open|draft|merged|closed, merge_sha, url} for an upstream PR.
+upstream_pr() {
+  local url="${GITHUB_API_URL:-https://api.github.com}/repos/$1/pulls/$2" out
+  if [ -n "${GH_TOKEN:-}" ]; then
+    out="$(curl -fsS --retry 3 --config <(printf 'header = "Authorization: Bearer %s"\n' "${GH_TOKEN}") \
+      -H 'Accept: application/vnd.github+json' "${url}")"
+  else
+    out="$(curl -fsS --retry 3 -H 'Accept: application/vnd.github+json' "${url}")"
+  fi || { echo "cannot look up upstream PR #$2 in $1" >&2; return 1; }
+  jq -c '{state: (if .merged then "merged" elif .state == "closed" then "closed" elif .draft then "draft" else "open" end),
+    merge_sha: (if .merged then .merge_commit_sha else null end), url: .html_url}' <<<"${out}"
 }
 
 # carries_inventory [FILE] prints carries.lock's entries, from main by default.
