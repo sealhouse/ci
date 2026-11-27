@@ -370,6 +370,12 @@ state "$(jq -nc --argjson g "${green}" --argjson c "$(signed "${pin_msg}")" --ar
 reset_log
 "${hack}/bot-merge.sh" secure-sign-pqc-operator main >"${t}/out"
 [ -z "$(calls PUT update-branch)$(calls GET 'compare/main\.\.\.')" ] || fail "bot-merge brought an operator PR up to date, which bump-update does"
+state "$(jq -nc --argjson r "${red_rep}" --argjson s "${rep_steps}" --argjson c "${op_rep}" '{checks: $r, jobs: {"501": {steps: $s}}, compare_commits: {"sha4...main": $c}}')"
+reset_log
+"${hack}/bot-merge.sh" secure-sign-pqc-operator main >"${t}/out"
+grep -q 'PR 4 (.*) failed only for a replace main has since taken: bump-update.sh tries it again' "${t}/out" || fail "an operator PR bump-update retries was reported as needing a maintainer: $(cat "${t}/out")"
+[ -z "$(calls PUT update-branch)$(calls PUT 'pulls/4/merge$')" ] || fail "bot-merge updated or merged a red operator PR"
+state '{"jobs": {}, "compare_commits": {}}'
 ok "bot-merge waits for a running PR before an update, reports one GitHub refuses, tries a red PR again only for a replace rhtas/main has since taken, and leaves the operator alone"
 
 # repin
