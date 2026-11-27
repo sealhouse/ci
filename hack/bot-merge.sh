@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # bot-merge.sh [REPO BASE] merges green ci-pin, replaces, vulns and bump PRs that only sealhouse-bot wrote, on every caller or on REPO.
+# On a fork it brings the oldest green one that rhtas/main has moved past up to date, once no other is running its checks.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -51,6 +52,7 @@ bump_only() {
       ($l | length) == 2 and ($l[0] | startswith("-" + $k)) and ($l[1] | test("^\\+" + $k + $i + "[0-9a-f]{64}$"))' >/dev/null
 }
 
+waiting="" stale=""
 while read -r number ref sha author; do
   [ -n "${number}" ] || continue
   if [ "${author}" != "${bot}" ]; then
@@ -65,6 +67,7 @@ while read -r number ref sha author; do
   checks="$(gh_api GET "/repos/${full}/commits/${sha}/check-runs?per_page=100" | jq '[.check_runs[] | select(.name | contains("hand-off") | not)]')"
   if [ "$(jq length <<<"${checks}")" -eq 0 ] || [ "$(jq '[.[] | select(.status != "completed")] | length' <<<"${checks}")" -gt 0 ]; then
     echo "${repo}: PR ${number} (${ref}) is waiting for its checks"
+    waiting="${number}"
     continue
   fi
   bad="$(jq -r '[.[] | select(.conclusion != "success" and .conclusion != "skipped") | .name] | join(", ")' <<<"${checks}")"
@@ -95,6 +98,15 @@ while read -r number ref sha author; do
       fi
       ;;
   esac
+  # A fork merges only what was tested on its rhtas/main; the operator's bump-update.sh does this for main.
+  if [ "${base}" = rhtas/main ]; then
+    behind="$(gh_api GET "/repos/${full}/compare/${base}...${sha}" | jq -r .behind_by)"
+    if [ "${behind}" -gt 0 ]; then
+      echo "${repo}: PR ${number} (${ref}) is ${behind} behind ${base}"
+      [ -n "${stale}" ] || stale="${number} ${sha} ${ref}"
+      continue
+    fi
+  fi
   # The squash keeps the first commit's trailers, which a sync needs to regenerate the carry.
   message="$(jq -r '.[0].commit.message' <<<"${commits}")"
   if ! jq -n --arg s "${sha}" --arg t "${message%%$'\n'*}" --arg m "$(sed '1,/^$/d' <<<"${message}")" \
@@ -105,3 +117,14 @@ while read -r number ref sha author; do
   fi
   echo "${repo}: merged PR ${number} (${ref})"
 done < <(jq -r '[.[] | select(.head.ref | test("^(ci-pin|replaces|vulns|bump)/"))] | sort_by(.number) | .[] | "\(.number) \(.head.ref) \(.head.sha) \(.user.login)"' <<<"${pulls}")
+
+# One update at a time: its lane hands off to the next run, which merges it and updates the next.
+[ -n "${stale}" ] || exit 0
+read -r number sha ref <<<"${stale}"
+if [ -n "${waiting}" ]; then
+  echo "${repo}: PR ${number} (${ref}) waits for PR ${waiting}'s checks before it is brought up to date"
+elif jq -n --arg s "${sha}" '{expected_head_sha: $s}' | gh_api PUT "/repos/${full}/pulls/${number}/update-branch" - >/dev/null; then
+  echo "${repo}: brought PR ${number} (${ref}) up to date with ${base}"
+else
+  echo "${repo}: PR ${number} (${ref}) could not be brought up to date: it needs a maintainer"
+fi

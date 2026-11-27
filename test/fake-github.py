@@ -139,6 +139,8 @@ class H(BaseHTTPRequestHandler):
             return self.reply(200, {"merged": True})
         if method == "GET" and rest == "/actions/workflows":
             return self.reply(200, {"workflows": state.get("workflows", [])})
+        if method == "PUT" and re.match(r"/pulls/\d+/update-branch$", rest) and rest.split("/")[2] in state.get("update_refused", []):
+            return self.reply(422, {"message": "merge conflict between base and head"})
         return self.reply(200, {})
 
     def do_GET(self):
