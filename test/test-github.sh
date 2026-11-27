@@ -117,13 +117,14 @@ running='[{"name": "pr / pr", "status": "in_progress", "conclusion": null}]'
 red='[{"name": "pr / pr", "status": "completed", "conclusion": "failure"}]'
 bumps="[$(bump 2 ci-pin/bbb sha2), $(bump 1 ci-pin/aaa sha1), $(bump 3 feature sha3)]"
 behind='{"ci-pin/aaa": 2, "ci-pin/bbb": 1, "feature": 9}'
-update_with() { # CHECKS_BY_SHA BEHIND
-  state "{\"pulls\": ${bumps}, \"checks\": [], \"checks_by_sha\": $1, \"behind\": $2}"
+update_with() { # CHECKS_BY_SHA BEHIND [EXTRA_STATE]
+  state "$(jq -nc --argjson p "${bumps}" --argjson c "$1" --argjson b "$2" --argjson x "${3:-{\}}" \
+    '{pulls: $p, checks: [], checks_by_sha: $c, behind: $b, jobs: {}, compare_commits: {}} + $x')"
   reset_log
   "${hack}/bump-update.sh" >"${t}/out"
 }
 update_with "{\"sha1\": ${green}, \"sha2\": ${green}, \"sha3\": ${green}}" "${behind}"
-calls POST access_tokens | jq -e '.body.permissions.checks == "read"' >/dev/null || fail "bump-update cannot read checks"
+calls POST access_tokens | jq -e '.body.permissions.checks == "read" and .body.permissions.actions == "read"' >/dev/null || fail "bump-update cannot read checks and their steps"
 calls PUT 'pulls/1/update-branch$' | jq -e '.body.expected_head_sha == "sha1"' >/dev/null || fail "oldest bump PR not updated"
 [ "$(calls PUT update-branch | wc -l)" -eq 1 ] || fail "updated more than one PR"
 ok "bump-update updates only the oldest PR behind main"
@@ -143,6 +144,32 @@ calls PUT 'pulls/2/update-branch$' | jq -e '.body.expected_head_sha == "sha2"' >
 [ "$(calls PUT update-branch | wc -l)" -eq 1 ] || fail "updated a failed PR"
 grep -q 'PR 1 .*needs a maintainer: pr / pr' "${t}/out" || fail "failed PR not reported"
 ok "bump-update skips a failed PR"
+
+# A PR that failed only at the Replaces step, before main merged the replaces PR, is tried on main once.
+red_rep='[{"id": 501, "name": "pr / pr", "status": "completed", "conclusion": "failure"}]'
+rep_steps='[{"name": "Unit tests", "conclusion": "success"}, {"name": "Replaces", "conclusion": "failure"}]'
+test_steps='[{"name": "Unit tests", "conclusion": "failure"}, {"name": "Replaces", "conclusion": "skipped"}]'
+rep_commit() { jq -nc --arg a "${2:-sealhouse-bot[bot]}" --arg m "$1" '[{author: {login: "someone"}, commit: {message: "Pin ci"}}, {author: {login: $a}, commit: {message: $m}}]'; }
+op_rep="$(rep_commit "Replace modules as ci's replaces.lock 139ac6547df7 asks")"
+retry_with() { # STEPS COMMITS
+  update_with "{\"sha1\": ${red_rep}, \"sha2\": ${green}}" "${behind}" \
+    "$(jq -nc --argjson s "$1" --argjson c "$2" '{jobs: {"501": {steps: $s}}, compare_commits: {"sha1...main": $c}}')"
+}
+retry_with "${rep_steps}" "${op_rep}"
+calls GET 'actions/jobs/501$' | grep -q . || fail "the failed job's steps were not read"
+calls PUT 'pulls/1/update-branch$' | jq -e '.body.expected_head_sha == "sha1"' >/dev/null || fail "a PR that failed for a replace main has since taken was not tried on main: $(cat "${t}/out")"
+[ "$(calls PUT update-branch | wc -l)" -eq 1 ] || fail "updated more than one PR"
+grep -q 'PR 1 .*failed only for a replace main has since taken: trying it on main' "${t}/out" || fail "the retry not reported"
+retry_with "${test_steps}" "${op_rep}"
+[ -z "$(calls PUT 'pulls/1/update-branch$')" ] || fail "tried a PR again that failed its tests"
+calls PUT 'pulls/2/update-branch$' | grep -q . || fail "a PR that failed its tests blocked the next"
+retry_with "${rep_steps}" '[]'
+[ -z "$(calls PUT 'pulls/1/update-branch$')" ] || fail "tried a PR again before main had a replaces PR"
+retry_with "${rep_steps}" "$(rep_commit "Replace modules as ci's replaces.lock 139ac6547df7 asks" someone)"
+[ -z "$(calls PUT 'pulls/1/update-branch$')" ] || fail "took a replaces subject someone else wrote"
+grep -q 'PR 1 .*needs a maintainer: pr / pr' "${t}/out" || fail "a PR main has no replace for not reported"
+grep -qx '      - name: Replaces' "${hack}/../.github/workflows/pr.yaml" || fail "the PR lane's Replaces step, which replace_retry names, has gone"
+ok "bump-update tries a PR that failed only at Replaces again once main has merged a replaces PR, and no other failed PR"
 
 update_with "{\"sha1\": ${green}, \"sha2\": ${green}}" '{"ci-pin/bbb": 1}'
 calls PUT 'pulls/2/update-branch$' | grep -q . || fail "a current green PR blocked the next"
@@ -214,7 +241,7 @@ pin_msg="UPSTREAM: <drop>: Pin ci ${p40:0:12}
 
 Ci-Pin: ${p40}"
 merge_with() { # PULLS EXTRA_STATE
-  state "$(jq -nc --argjson p "$1" --argjson g "${green}" --argjson x "${2:-{\}}" '{pulls: $p, checks: $g, checks_by_sha: {}, compare_status: {}, behind: {}, merge_refused: [], update_refused: [], pr_commits: {}, pr_files: {}} + $x')"
+  state "$(jq -nc --argjson p "$1" --argjson g "${green}" --argjson x "${2:-{\}}" '{pulls: $p, checks: $g, checks_by_sha: {}, compare_status: {}, behind: {}, merge_refused: [], update_refused: [], pr_commits: {}, pr_files: {}, jobs: {}, compare_commits: {}} + $x')"
   reset_log
   "${hack}/bot-merge.sh" app rhtas/main >"${t}/out"
 }
@@ -224,7 +251,7 @@ merge_with "[$(botpr 4 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]'), $(botpr 6 rep
   "$(jq -nc --argjson pc "$(signed "${pin_msg}")" --argjson rc "$(signed $'UPSTREAM: <drop>: Replace modules\n\nGo-Replaces: replaces.lock')" \
     --argjson vc "$(signed $'UPSTREAM: <drop>: Fix GO-2099-0001\n\nGo-Get: . example.com/vulnlib@v1.0.1')" \
     --argjson pf "[${good_pin}]" --argjson rf "${good_rep}" '{pr_commits: {"4": $pc, "6": $rc, "10": $vc}, pr_files: {"4": $pf, "6": $rf, "10": $rf}}')"
-calls POST access_tokens | jq -e '.body == {permissions: {contents: "write", pull_requests: "write", checks: "read", workflows: "write"}, repositories: ["app", "ci"]}' >/dev/null || fail "bot-merge token scope"
+calls POST access_tokens | jq -e '.body == {permissions: {contents: "write", pull_requests: "write", checks: "read", actions: "read", workflows: "write"}, repositories: ["app", "ci"]}' >/dev/null || fail "bot-merge token scope"
 calls PUT 'pulls/4/merge$' | jq -e --arg p "${p40}" '.body == {merge_method: "squash", sha: "sha4", commit_title: "UPSTREAM: <drop>: Pin ci \($p[0:12])", commit_message: "Ci-Pin: \($p)"}' >/dev/null || fail "ci-pin merge keeps its trailer"
 calls GET "ci/compare/${p40}...main" | grep -q . || fail "the pin was not checked against ci main"
 calls PUT 'pulls/6/merge$' | jq -e '.body.commit_message == "Go-Replaces: replaces.lock"' >/dev/null || fail "replaces merge keeps its trailer"
@@ -329,12 +356,21 @@ stale_with "[$(botpr 4 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]')]" '{"sha4": 1}
 grep -q 'PR 4 (.*) could not be brought up to date: it needs a maintainer' "${t}/out" || fail "a refused update not reported"
 stale_with "[$(botpr 4 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]')]" '{"sha4": 1}' '{"checks": '"${red}"'}'
 [ -z "$(calls PUT update-branch)" ] || fail "brought a red PR up to date"
+fork_rep="$(rep_commit $'UPSTREAM: <drop>: Replace modules as ci\'s replaces.lock asks\n\nGo-Replaces: replaces.lock')"
+stale_with "[$(botpr 4 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]')]" '{"sha4": 1}' \
+  "$(jq -nc --argjson r "${red_rep}" --argjson s "${rep_steps}" --argjson c "${fork_rep}" '{checks: $r, jobs: {"501": {steps: $s}}, compare_commits: {"sha4...rhtas/main": $c}}')"
+calls PUT 'pulls/4/update-branch$' | jq -e '.body == {expected_head_sha: "sha4"}' >/dev/null || fail "a fork PR that failed for a replace rhtas/main has since taken was not tried again: $(cat "${t}/out")"
+[ -z "$(calls PUT 'pulls/4/merge$')" ] || fail "merged a red PR"
+grep -q 'PR 4 (.*) failed only for a replace rhtas/main has since taken' "${t}/out" || fail "the fork retry not reported"
+stale_with "[$(botpr 4 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]')]" '{"sha4": 1}' \
+  "$(jq -nc --argjson r "${red_rep}" --argjson s "${test_steps}" --argjson c "${fork_rep}" '{checks: $r, jobs: {"501": {steps: $s}}, compare_commits: {"sha4...rhtas/main": $c}}')"
+[ -z "$(calls PUT update-branch)" ] || fail "tried a fork PR again that failed its tests"
 state "$(jq -nc --argjson g "${green}" --argjson c "$(signed "${pin_msg}")" --argjson f "[${good_pin}]" --argjson p "[$(botpr 4 "ci-pin/${p40:0:12}" 'sealhouse-bot[bot]')]" \
   '{pulls: $p, checks: $g, checks_by_sha: {}, compare_status: {}, behind: {sha4: 1}, merge_refused: [], update_refused: [], pr_commits: {"4": $c}, pr_files: {"4": $f}}')"
 reset_log
 "${hack}/bot-merge.sh" secure-sign-pqc-operator main >"${t}/out"
 [ -z "$(calls PUT update-branch)$(calls GET 'compare/main\.\.\.')" ] || fail "bot-merge brought an operator PR up to date, which bump-update does"
-ok "bot-merge waits for a running PR before an update, reports one GitHub refuses, leaves red PRs and the operator alone"
+ok "bot-merge waits for a running PR before an update, reports one GitHub refuses, tries a red PR again only for a replace rhtas/main has since taken, and leaves the operator alone"
 
 # repin
 pin="$(printf 'f%.0s' {1..40})"

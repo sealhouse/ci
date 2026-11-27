@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # bump-update.sh brings the oldest bump or ci-pin PR that main has moved past up to date, one at a time.
 # A bump is rebuilt on main rather than merged with it, as two bumps of images.env conflict.
+# A PR that failed only for a replace main has since taken is tried again on main, once.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -8,7 +9,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 source "${root}/hack/github.sh"
 
 repo="${gh_org}/secure-sign-pqc-operator"
-GH_TOKEN="$(gh_app_token "${BOT_APP_ID:?}" "${BOT_APP_KEY:?}" '{"contents":"write","pull_requests":"write","checks":"read","workflows":"write"}' secure-sign-pqc-operator)"
+GH_TOKEN="$(gh_app_token "${BOT_APP_ID:?}" "${BOT_APP_KEY:?}" '{"contents":"write","pull_requests":"write","checks":"read","actions":"read","workflows":"write"}' secure-sign-pqc-operator)"
 export GH_TOKEN
 
 # rebuild NUMBER REF SHA TITLE puts the image line bump PR NUMBER sets on main's images.env, and moves REF there.
@@ -44,8 +45,11 @@ while read -r number ref sha title; do
   fi
   bad="$(jq -r '[.[] | select(.conclusion != "success" and .conclusion != "skipped") | .name] | join(", ")' <<<"${checks}")"
   if [ -n "${bad}" ]; then
-    echo "PR ${number} (${ref}) needs a maintainer: ${bad}"
-    continue
+    if ! replace_retry "${repo}" main "${sha}" "${checks}"; then
+      echo "PR ${number} (${ref}) needs a maintainer: ${bad}"
+      continue
+    fi
+    echo "PR ${number} (${ref}) failed only for a replace main has since taken: trying it on main"
   fi
   behind="$(gh_api GET "/repos/${repo}/compare/main...${ref}" | jq -r .behind_by)"
   [ "${behind}" -gt 0 ] || continue
