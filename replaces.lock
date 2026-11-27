@@ -1,2 +1,3 @@
 # <module> <fork module> <fork version> <drop when: upstream>=vX.Y.Z | upstream-pr=N> <reason, the rest of the line>
 # github.com/x/y github.com/sealhouse/y v1.2.4-rhtas.1 upstream>=v1.2.5 CVE-2026-1 in y's parser
+github.com/coreos/go-oidc/v3 github.com/sealhouse/go-oidc/v3 v3.21.1-rhtas.1 upstream-pr=507 ML-DSA signed OIDC tokens (go-oidc#507)
