@@ -27,7 +27,7 @@ flowchart LR
   class syncpr,bumppr pr
 ```
 
-Bumps go one at a time, each rebuilt on the operator's main when main moves, so a bump of one image never conflicts with another's. A red bump waits for a maintainer and holds no other; a newer image closes the older bump of the same image.
+Bumps go one at a time, each rebuilt on the operator's main when main moves, so a bump of one image never conflicts with another's. A red bump waits for a maintainer and holds no other, unless it failed only at the PR lane's Replaces step and main has since merged a replaces PR: then it is tried once on main; a newer image closes the older bump of the same image.
 
 ### A ci change
 
@@ -45,7 +45,7 @@ flowchart LR
   class cipr,pinpr,bumppr pr
 ```
 
-A bot PR merges only as tested on the branch it lands on. On a fork, `bot-merge.sh` brings the oldest green bot PR that rhtas/main has moved past up to date, one at a time and only once no other bot PR is running its checks; its lane hands off to the next run, which merges it. On the operator, `bump-update.sh` does this for main.
+A bot PR merges only as tested on the branch it lands on. On a fork, `bot-merge.sh` brings the oldest green bot PR that rhtas/main has moved past up to date, or one that failed only at Replaces before rhtas/main merged a replaces PR,, one at a time and only once no other bot PR is running its checks; its lane hands off to the next run, which merges it. On the operator, `bump-update.sh` does this for main.
 
 ### A library fix in a fork
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # bot-merge.sh [REPO BASE] merges green ci-pin, replaces, vulns and bump PRs that only sealhouse-bot wrote, on every caller or on REPO.
-# On a fork it brings the oldest green one that rhtas/main has moved past up to date, once no other is running its checks.
+# On a fork it brings the oldest green one that rhtas/main has moved past up to date, once no other is running its checks;
+# one that failed only for a replace rhtas/main has since taken counts as green for this.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -20,7 +21,7 @@ fi
 repo="$1" base="$2"
 full="${gh_org}/${repo}"
 bot="sealhouse-bot[bot]"
-GH_TOKEN="$(gh_app_token "${BOT_APP_ID:?}" "${BOT_APP_KEY:?}" '{"contents":"write","pull_requests":"write","checks":"read","workflows":"write"}' "${repo}" ci)"
+GH_TOKEN="$(gh_app_token "${BOT_APP_ID:?}" "${BOT_APP_KEY:?}" '{"contents":"write","pull_requests":"write","checks":"read","actions":"read","workflows":"write"}' "${repo}" ci)"
 export GH_TOKEN
 
 pulls="$(gh_api GET "/repos/${full}/pulls?state=open&base=${base}&per_page=100")"
@@ -72,7 +73,12 @@ while read -r number ref sha author; do
   fi
   bad="$(jq -r '[.[] | select(.conclusion != "success" and .conclusion != "skipped") | .name] | join(", ")' <<<"${checks}")"
   if [ -n "${bad}" ]; then
-    echo "${repo}: PR ${number} (${ref}) needs a maintainer: ${bad}"
+    if [ "${base}" = rhtas/main ] && replace_retry "${full}" "${base}" "${sha}" "${checks}"; then
+      echo "${repo}: PR ${number} (${ref}) failed only for a replace ${base} has since taken"
+      [ -n "${stale}" ] || stale="${number} ${sha} ${ref}"
+    else
+      echo "${repo}: PR ${number} (${ref}) needs a maintainer: ${bad}"
+    fi
     continue
   fi
   files="$(gh_api GET "/repos/${full}/pulls/${number}/files?per_page=100")"

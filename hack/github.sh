@@ -100,3 +100,16 @@ gh_commit() {
     gh_api POST "/repos/${repo}/git/commits" - | jq -r .sha)"
   printf '%s\n' "${commit}"
 }
+
+# replace_retry REPO BASE SHA CHECKS passes when the failed CHECKS of head SHA failed only at the PR lane's Replaces
+# step, and BASE has since merged a replaces PR that SHA lacks: a retry on BASE should pass.
+replace_retry() {
+  local id failed
+  for id in $(jq -r '.[] | select(.conclusion != "success" and .conclusion != "skipped") | .id' <<<"$4"); do
+    failed="$(gh_api GET "/repos/$1/actions/jobs/${id}" | jq -r '[.steps // [] | .[] | select(.conclusion == "failure") | .name] | join(",")')" || return 1
+    [ "${failed}" = Replaces ] || return 1
+  done
+  gh_api GET "/repos/$1/compare/$3...$2" |
+    jq -e 'any(.commits // [] | .[]; .author.login == "sealhouse-bot[bot]" and
+      (.commit.message | split("\n")[0] | test("^(UPSTREAM: <drop>: )?Replace modules as ci.s replaces\\.lock ([0-9a-f]+ )?asks$")))' >/dev/null
+}

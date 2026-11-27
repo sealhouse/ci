@@ -123,7 +123,10 @@ class H(BaseHTTPRequestHandler):
             return self.reply(201, pr)
         if method == "GET" and rest.startswith("/compare/"):
             return self.reply(200, {"behind_by": state.get("behind", {}).get(rest.split("...")[1], 0),
-                                    "status": state.get("compare_status", {}).get(rest[len("/compare/"):], "ahead")})
+                                    "status": state.get("compare_status", {}).get(rest[len("/compare/"):], "ahead"),
+                                    "commits": state.get("compare_commits", {}).get(rest[len("/compare/"):], [])})
+        if method == "GET" and re.match(r"/actions/jobs/\d+$", rest):
+            return self.reply(200, state.get("jobs", {}).get(rest.split("/")[3], {"steps": []}))
         if method == "GET" and rest.endswith("/check-runs"):
             return self.reply(200, {"check_runs": state.get("checks_by_sha", {}).get(rest.split("/")[2], state["checks"])})
         if method == "POST" and rest.endswith("/requested_reviewers") and state.get("reviews_refused"):
